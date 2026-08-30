@@ -10,10 +10,9 @@ import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, Float, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, UUIDType
 
 if TYPE_CHECKING:
     from app.models.crop import CropCycle
@@ -25,7 +24,7 @@ class Farm(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "farms"
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -54,7 +53,7 @@ class Plot(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     farm_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("farms.id", ondelete="CASCADE"),
         nullable=False,
     )

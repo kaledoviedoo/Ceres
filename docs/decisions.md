@@ -252,6 +252,65 @@ entonces no hay informacion suficiente para elegir bien.
 
 ---
 
+## D-018 — La aritmetica del error esta duplicada (Python y SQL)
+
+**Situacion.** `app/domain/performance.py` calcula `absolute_error_kg` y
+`percentage_error` para la API. La vista SQL `cell_performance` (migracion 0003)
+calcula lo mismo.
+
+**Por que se acepta la duplicacion.** La API necesita una implementacion
+portable: la vista usa `LEFT JOIN LATERAL`, que no existe en SQLite, y sin
+Docker los tests de integracion no pueden ejecutarla. La vista, a su vez, es lo
+que hace utiles las consultas ad-hoc y cualquier BI que se conecte a Supabase.
+
+**Coste real y como se contiene.** Si una cambia sin la otra, la API y las
+consultas manuales daran numeros distintos sobre los mismos datos. Contencion:
+ambas llevan un comentario que apunta a la otra, los dos redondean a 4 decimales,
+y `tests/unit/test_performance.py` fija los valores de referencia.
+
+**Cuando resolverlo.** En cuanto haya un PostgreSQL disponible: se anade un test
+de integracion que ejecute la vista y compare fila a fila con el helper de
+Python. Hasta entonces la divergencia es posible y nadie la detectaria.
+
+---
+
+## D-019 — Tests de integracion sobre SQLite, no sobre PostgreSQL
+
+**Decision.** Los 60 tests de integracion levantan el esquema con
+`Base.metadata.create_all()` sobre SQLite en memoria.
+
+**Por que.** No hay Docker en la maquina de desarrollo. La alternativa era no
+tener tests de integracion en absoluto, y eso es peor: SQLite verifica de verdad
+el cableado HTTP -> servicio -> motor -> ORM -> respuesta, los schemas, los
+codigos de error y la persistencia.
+
+**Coste, explicito.** Todo lo especifico de PostgreSQL queda sin probar: las
+migraciones SQL, el trigger de inmutabilidad, la vista `cell_performance`, los
+CHECK constraints y los tipos nativos. La lista completa esta en
+`tests/conftest.py` y en [api.md](api.md). No se ha ejecutado ni una vez contra
+Postgres, y este documento no pretende lo contrario.
+
+**Consecuencia en el codigo.** Los modelos usan `sqlalchemy.Uuid` y
+`JSON().with_variant(JSONB, "postgresql")` en lugar de los tipos del dialecto
+`postgresql`. En PostgreSQL el resultado es identico (uuid nativo y jsonb); lo
+que cambia es que el esquema tambien puede levantarse en otro motor.
+
+---
+
+## D-020 — El 409 por celda y ciclo de lotes distintos
+
+**Decision.** Pedir una prediccion, observacion o cosecha para una celda que no
+pertenece al lote del ciclo de cultivo devuelve 409, no 422 ni 404.
+
+**Por que.** La peticion es sintacticamente valida (dos UUID que existen), pero
+incoherente con el estado del sistema. No puede detectarlo un schema porque hace
+falta leer la base de datos, y no es un 404 porque ambos recursos existen.
+
+**Coste.** Una consulta extra por peticion de escritura. A cambio, la base de
+datos no acumula predicciones sobre pares celda/ciclo que no significan nada.
+
+---
+
 ## Relacionado
 
 - [architecture.md](architecture.md)

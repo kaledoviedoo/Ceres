@@ -14,12 +14,10 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import CheckConstraint, Float, ForeignKey, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import RiskLevel
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import Base, JSONType, TimestampMixin, UUIDPrimaryKeyMixin, UUIDType
 
 if TYPE_CHECKING:
     from app.models.crop import CropCycle
@@ -43,12 +41,12 @@ class Prediction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     cell_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("grid_cells.id", ondelete="CASCADE"),
         nullable=False,
     )
     crop_cycle_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("crop_cycles.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -65,10 +63,10 @@ class Prediction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     #: Desglose de factores multiplicativos que explican el resultado
     #: ({"soil_factor": 1.1, "health_factor": 0.85, ...}). Sirve para la UI
     #: "por que esta prediccion es asi".
-    factors: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    factors: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
     #: Copia de las entradas usadas. Permite reproducir la prediccion aunque la
     #: celda cambie despues.
-    inputs: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False, default=dict)
 
     cell: Mapped["GridCell"] = relationship(back_populates="predictions")
     crop_cycle: Mapped["CropCycle"] = relationship(back_populates="predictions")

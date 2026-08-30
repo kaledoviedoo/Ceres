@@ -11,11 +11,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import ObservationType
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, UUIDType
 
 if TYPE_CHECKING:
     from app.models.crop import CropCycle
@@ -34,14 +33,14 @@ class Observation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     cell_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("grid_cells.id", ondelete="CASCADE"),
         nullable=False,
     )
     #: Opcional: una observacion puede existir fuera de un ciclo de cultivo
     #: (p.ej. dano fisico del terreno entre temporadas).
     crop_cycle_id: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("crop_cycles.id", ondelete="SET NULL"),
     )
 
@@ -54,7 +53,7 @@ class Observation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     created_by: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+        UUIDType, ForeignKey("users.id", ondelete="SET NULL")
     )
 
     cell: Mapped["GridCell"] = relationship(back_populates="observations")

@@ -21,10 +21,9 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, UUIDType
 
 if TYPE_CHECKING:
     from app.models.farm import Plot
@@ -47,7 +46,7 @@ class GridCell(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     plot_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("plots.id", ondelete="CASCADE"),
         nullable=False,
     )

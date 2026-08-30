@@ -32,17 +32,22 @@ ESTADO  ->  PREDICCION  ->  OBSERVACION  ->  COSECHA  ->  VALIDACION
 | 1 | Modelo de dominio, schemas, tipos | ✅ |
 | 2 | Migraciones, seeds, dataset sintetico | ✅ |
 | 3 | Motor de prediccion `predict()` | ✅ |
-| 4 | Endpoints FastAPI | ⬜ siguiente |
-| 5 | Frontend 2D (grid 20x20) | ⬜ |
+| 4 | Endpoints FastAPI | ✅ |
+| 5 | Frontend 2D (grid 20x20) | ⬜ siguiente |
 | 6 | Integracion Next.js ↔ FastAPI | ⬜ |
 | 7 | React Three Fiber | ⬜ |
 | 8 | Observaciones | ⬜ |
 | 9 | Cosechas y error de prediccion | ⬜ |
 | 10 | Historico prediccion vs realidad | ⬜ |
 
-Lo que hay ahora: el modelo de dominio completo, el esquema de base de datos,
-un generador de finca sintetica reproducible y el motor de prediccion
-funcionando y testeado. Todavia no hay API ni frontend.
+Lo que hay ahora: el ciclo `celda -> motor -> API -> JSON` cerrado y testeado
+de extremo a extremo, sobre datos sinteticos reproducibles. Todavia no hay
+frontend.
+
+**Aviso sobre los tests:** no hay Docker en la maquina de desarrollo, asi que los
+tests de integracion corren sobre SQLite en memoria. Nada se ha ejecutado contra
+PostgreSQL real. La lista de lo que queda pendiente de verificar esta en
+[api.md](docs/api.md#que-se-ha-probado-y-contra-que).
 
 ---
 
@@ -87,11 +92,22 @@ py scripts/generate_demo_data.py --apply
 
 Genera 1 finca, 2 lotes, 800 celdas, 1 ciclo de cultivo y 24 observaciones.
 
-### 5. Tests
+### 5. Levantar la API
 
 ```bash
 cd apps/api
-pytest
+uvicorn app.main:app --reload
+```
+
+Swagger en http://localhost:8000/docs
+
+### 6. Tests
+
+```bash
+cd apps/api
+pytest                    # todo
+pytest tests/unit         # sin base de datos
+pytest tests/integration  # SQLite en memoria, no PostgreSQL
 ```
 
 ---
@@ -107,6 +123,7 @@ pytest
 | `py scripts/generate_demo_data.py --seed 7` | Otra finca, igual de reproducible |
 | `psql "$DATABASE_URL" -f scripts/reset_demo_data.sql` | Vacia todas las tablas |
 | `py scripts/preview_predictions.py` | Predice las 400 celdas y muestra 3 ejemplos |
+| `cd apps/api && uvicorn app.main:app --reload` | Levanta la API en :8000 |
 | `cd apps/api && pytest` | Tests |
 
 ---
@@ -122,9 +139,14 @@ ceres/
 │   │   └── synthetic/  generador determinista de terreno
 │   ├── models/         SQLAlchemy — persistencia
 │   ├── schemas/        Pydantic — contrato de API
+│   ├── services/       consultas SQL y orquestacion
+│   ├── api/v1/         routers HTTP (finos)
+│   ├── main.py         la app FastAPI
 │   ├── config.py
 │   └── db.py
-├── apps/api/tests/unit/
+├── apps/api/tests/
+│   ├── unit/           sin base de datos
+│   └── integration/    SQLite en memoria
 ├── database/
 │   ├── migrations/     SQL versionado (fuente de verdad del esquema)
 │   └── seeds/          generado, no versionado

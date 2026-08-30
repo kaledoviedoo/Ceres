@@ -4,6 +4,10 @@
 -- Prediccion vs realidad. La comparacion vive en SQL (una sola definicion) en
 -- lugar de repetirse en el backend y en el frontend.
 --
+-- La aritmetica del error esta duplicada a proposito con
+-- apps/api/app/domain/performance.py, que es la que usa la API. Si una cambia,
+-- la otra tiene que cambiar con ella (ver docs/decisions.md D-018).
+--
 -- Emparejamiento: para cada prediccion se busca la cosecha de la misma celda y
 -- el mismo ciclo de cultivo. Si una celda se cosecha varias veces en un ciclo,
 -- se toma la mas reciente; el MVP asume una cosecha por celda y ciclo.
@@ -32,14 +36,16 @@ SELECT
 
     CASE
         WHEN h.actual_yield_kg IS NULL THEN NULL
-        ELSE abs(p.projected_yield_kg - h.actual_yield_kg)
+        ELSE round((abs(p.projected_yield_kg - h.actual_yield_kg))::numeric, 4)
     END                             AS absolute_error_kg,
 
     -- Error relativo respecto al valor REAL (convencion estandar de MAPE).
     -- Se deja NULL si el real es 0: no se inventa un porcentaje infinito.
     CASE
         WHEN h.actual_yield_kg IS NULL OR h.actual_yield_kg = 0 THEN NULL
-        ELSE abs(p.projected_yield_kg - h.actual_yield_kg) / h.actual_yield_kg * 100.0
+        ELSE round(
+            (abs(p.projected_yield_kg - h.actual_yield_kg) / h.actual_yield_kg * 100.0)::numeric, 4
+        )
     END                             AS percentage_error
 
 FROM predictions p

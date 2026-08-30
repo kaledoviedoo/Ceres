@@ -24,11 +24,10 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import CropCycleStatus
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, UUIDType
 
 if TYPE_CHECKING:
     from app.models.farm import Plot
@@ -50,7 +49,7 @@ class Crop(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -85,12 +84,12 @@ class CropCycle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     plot_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("plots.id", ondelete="CASCADE"),
         nullable=False,
     )
     crop_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("crops.id", ondelete="RESTRICT"),
         nullable=False,
     )

@@ -11,10 +11,9 @@ from datetime import date
 from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, Date, Float, ForeignKey, Integer, Text
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, UUIDType
 
 if TYPE_CHECKING:
     from app.models.crop import CropCycle
@@ -30,12 +29,12 @@ class Harvest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     cell_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("grid_cells.id", ondelete="CASCADE"),
         nullable=False,
     )
     crop_cycle_id: Mapped[uuid.UUID] = mapped_column(
-        PgUUID(as_uuid=True),
+        UUIDType,
         ForeignKey("crop_cycles.id", ondelete="CASCADE"),
         nullable=False,
     )
@@ -46,7 +45,7 @@ class Harvest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
     created_by: Mapped[uuid.UUID | None] = mapped_column(
-        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+        UUIDType, ForeignKey("users.id", ondelete="SET NULL")
     )
 
     cell: Mapped["GridCell"] = relationship(back_populates="harvests")

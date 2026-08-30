@@ -46,13 +46,14 @@ ceres/
 │       │   │   └── synthetic/   generador de datos deterministas
 │       │   ├── models/        mapeo de persistencia (SQLAlchemy)
 │       │   ├── schemas/       contrato publico de la API (Pydantic)
-│       │   ├── services/      consultas y casos de uso (fase 4)
-│       │   ├── api/           routers HTTP (fase 4)
+│       │   ├── services/      consultas y casos de uso
+│       │   ├── api/v1/        routers HTTP (finos)
+│       │   ├── main.py        la app FastAPI
 │       │   ├── config.py      settings desde .env
 │       │   └── db.py          engine y sesiones
 │       └── tests/
-│           ├── unit/
-│           └── integration/
+│           ├── unit/          sin base de datos
+│           └── integration/   SQLite en memoria (no PostgreSQL: no hay Docker)
 ├── database/
 │   ├── migrations/        SQL versionado (fuente de verdad del esquema)
 │   └── seeds/             seed de demo GENERADO, no editar a mano
@@ -95,6 +96,15 @@ un notebook y sustituirlo por un modelo estadistico sin tocar nada mas.
 6. **El motor no importa nada de infraestructura.** Ni FastAPI, ni SQLAlchemy,
    ni red. Recibe protocolos estructurales (`CellState`, `CropSpec`), asi que un
    `GridCell` real sirve y un dataclass de tres lineas tambien.
+7. **Ninguna consulta SQL fuera de `services/`.** Los routers validan, llaman a
+   un servicio y devuelven un schema. Nada mas.
+8. **Los servicios no conocen HTTP.** Lanzan `NotFoundError` y `ConflictError`;
+   la traduccion a 404 y 409 ocurre en un unico sitio
+   (`api/exception_handlers.py`). Asi los mismos servicios valen para un
+   endpoint, un script o un worker.
+9. **El servidor es la fuente de verdad agricola.** El cliente solo manda
+   identificadores. `PredictionCreate` declara `extra="forbid"`, asi que enviar
+   `soil_quality` o `projected_yield_kg` se rechaza con 422.
 
 ## Que deja preparado esta arquitectura (sin implementarlo)
 
