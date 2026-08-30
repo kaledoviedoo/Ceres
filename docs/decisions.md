@@ -180,6 +180,78 @@ Lo mismo aplicara a `node_modules/` en la fase 5.
 
 ---
 
+## D-014 — Rendimiento multiplicativo, perdida aditiva
+
+**Decision.** El rendimiento multiplica factores; la perdida suma causas.
+
+**Por que.** No es una asimetria caprichosa. Multiplicativo en el rendimiento
+porque una celda con sanidad 0 tiene que dar 0 kg, y porque el desglose se lee
+directo en la UI como porcentajes. Aditivo en la perdida porque las causas se
+acumulan: una celda empinada Y enferma pierde por las dos razones, y
+multiplicarlas daria menos perdida que cada una por separado.
+
+**Coste.** Dos mentalidades distintas en el mismo motor. Documentado en cada
+modulo para que nadie "corrija" la inconsistencia aparente.
+
+---
+
+## D-015 — Redondear el rendimiento antes de calcular las cajas
+
+**Decision.** `projected_yield_kg` se redondea a 4 decimales y las cajas se
+calculan sobre el valor redondeado.
+
+**Por que.** `ceil()` amplifica el error de coma flotante: `12.000000000000002 / 6`
+redondeado hacia arriba da 3 cajas en vez de 2. Ademas garantiza que las cajas
+guardadas correspondan al rendimiento guardado, y no a un valor intermedio que
+nadie puede ver.
+
+**Coste.** Ninguno a la escala del MVP.
+
+---
+
+## D-016 — El motor recibe protocolos, no modelos
+
+**Decision.** `predict(cell, crop)` acepta cualquier objeto que exponga los
+atributos de `CellState` y `CropSpec` (`typing.Protocol`, tipado estructural).
+
+**Por que.** El motor tiene que funcionar sin base de datos: desde un test, un
+script o un notebook. Importar `GridCell` de SQLAlchemy lo ataria a la capa de
+persistencia justo en el modulo que mas falta hace mantener aislado. Con
+protocolos, un `GridCell` real sirve sin heredar de nada, y un dataclass de
+tres lineas tambien.
+
+**Alternativa descartada.** Que el motor importara los modelos y los servicios
+le pasaran objetos ORM: mas corto de escribir, imposible de testear aislado.
+
+---
+
+## D-017 — El dataset sintetico no alcanza riesgo alto (PENDIENTE)
+
+**Observacion.** Ejecutando `rule-based-v0.1` sobre las 400 celdas de Plot A con
+la seed 42, el `risk_score` maximo es 0.5997: **cero celdas en `high`**, 264 en
+`medium`, 136 en `low`.
+
+**Causa.** Esta en el generador, no en el motor. `TerrainProfile` nunca lleva la
+sanidad por debajo de ~0.50 ni el suelo por debajo de ~0.44.
+
+**Por que no se ha "arreglado".** Retocar el generador o los umbrales para que
+salgan numeros mas vistosos es exactamente como se acaba evaluando un modelo
+contra su propio generador. La decision es del producto, no del motor.
+
+**Opciones, para decidir antes de la fase 5:**
+
+1. Endurecer `TerrainProfile` con una zona realmente mala. Es lo mas realista:
+   las fincas tienen esquinas malas. Cambia todos los datos de demo.
+2. Bajar `RISK_HIGH_THRESHOLD` de 0.66. Barato, pero cambia el significado de
+   "riesgo alto" en todo el sistema.
+3. Dejarlo. La vista de riesgo del frontend solo mostrara dos de los tres
+   colores, y el caso rojo no se ejercitara en la demo.
+
+**Recomendacion.** Opcion 1, cuando llegue la fase 5 y se vea el mapa. Hasta
+entonces no hay informacion suficiente para elegir bien.
+
+---
+
 ## Relacionado
 
 - [architecture.md](architecture.md)

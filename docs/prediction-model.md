@@ -1,11 +1,17 @@
 # Modelo de prediccion
 
-> **Estado: DISENADO, NO IMPLEMENTADO.** Los contratos de entrada y salida ya
-> existen en `app/core/prediction/contracts.py` (fase 1). Las formulas de este
-> documento se implementan y se testean en la **fase 3**.
+> **Estado: IMPLEMENTADO Y TESTEADO** (fase 3). Codigo en
+> `apps/api/app/core/prediction/`. 190 tests en verde.
 
-> DEMO / SYNTHETIC DATA — CERES estima rendimiento con un modelo determinista
-> sintetico. No es una prediccion agronomica validada experimentalmente.
+> ## ⚠️ MODELO EXPERIMENTAL / DEMOSTRATIVO
+>
+> Este MVP utiliza datos geograficos y agricolas **sinteticos**. El motor de
+> prediccion debe considerarse un modelo **experimental y demostrativo**, y **no**
+> una prediccion agronomica cientificamente validada.
+>
+> Formulacion admisible: *"CERES prototype estimates yield using a deterministic
+> synthetic model."* Nada mas fuerte que eso hasta que existan datos reales y
+> validacion experimental.
 
 ## Principio
 
@@ -28,21 +34,48 @@ MODEL_VERSION = "rule-based-v0.1"
 Cada prediccion guarda su version. Cambiar una formula **nunca** reescribe
 predicciones pasadas: se sube la version y las nuevas filas la llevan.
 
-## Variable auxiliar
+## Etapas del motor
 
-Casi todas las formulas usan la pendiente normalizada:
+Cada etapa es un modulo con una responsabilidad y una formula:
+
+| Modulo | Responsabilidad |
+|---|---|
+| `features.py` | extraccion y normalizacion |
+| `yield_model.py` | rendimiento y factores explicativos |
+| `loss.py` | perdida estimada |
+| `risk.py` | riesgo y su clasificacion |
+| `boxes.py` | cajas necesarias |
+| `engine.py` | orquestacion y construccion del resultado |
+| `contracts.py` | tipos de entrada y salida, con sus invariantes |
+
+```python
+from app.core.prediction import predict
+
+result = predict(cell, crop, area_m2=plot.cell_size_m ** 2)
+```
+
+`cell` y `crop` solo tienen que exponer los atributos de los protocolos
+`CellState` y `CropSpec`. Un `GridCell` y un `Crop` de SQLAlchemy los cumplen sin
+heredar de nada, y el motor sigue sin importar SQLAlchemy.
+
+## 0. Normalizacion
 
 ```
-slope_norm = clip(slope_deg / 15, 0, 1)
+slope_norm    = clip(slope_deg / 15, 0, 1)
+density_ratio = plant_density / optimal_plant_density_per_m2
 ```
 
 15 grados es la pendiente a partir de la cual se aplica la penalizacion maxima.
-Es una decision de producto para el MVP, no un umbral agronomico medido.
+
+**La elevacion no entra en ninguna formula.** Solo se usa para *derivar* la
+pendiente al generar el terreno, y para deformar la superficie en el render 3D.
+Una celda a 800 m y otra a 2800 m con la misma pendiente reciben identica
+prediccion. Hay un test que lo fija.
 
 ## 1. Rendimiento proyectado
 
 ```
-density_factor  = clip(plant_density / optimal_plant_density, 0, 1.15)
+density_factor  = clip(density_ratio, 0, 1.15)
 soil_factor     = 0.70 + 0.50 * soil_quality          -> 0.70 .. 1.20
 health_factor   = health_factor                        -> 0.00 .. 1.00
 terrain_factor  = 1.00 - 0.25 * slope_norm             -> 0.75 .. 1.00
@@ -57,18 +90,12 @@ projected_yield_kg =
     * base_yield_factor
 ```
 
-Multiplicativo a proposito: cada factor es un porcentaje del potencial, y el
-desglose se lee directo en la UI ("Suelo +10%, Sanidad -15%, Terreno -8%").
+Multiplicativo por dos razones: el desglose se lee directo en la UI ("Suelo
++10%, Sanidad -15%, Terreno -8%"), y una celda con sanidad 0 debe dar 0 kg, cosa
+que un modelo aditivo no garantiza.
 
 `density_factor` se topa en 1.15: sembrar mas denso ayuda hasta un punto, y
-pasado ese punto las plantas compiten entre si. Sin el tope, una celda
-sobresembrada daria un rendimiento absurdo.
-
-Ejemplo con los numeros del brief:
-
-```
-12 kg/m2 x 1 m2 x 0.95 x 1.10 x 0.85 x 0.92 = 9.80 kg
-```
+pasado ese punto las plantas compiten entre si.
 
 **Garantia:** todos los factores son >= 0 y `base_yield` > 0, asi que
 `projected_yield_kg` nunca es negativo.
@@ -79,26 +106,27 @@ Ejemplo con los numeros del brief:
 projected_boxes = ceil(projected_yield_kg / box_capacity_kg)
 ```
 
-Se calcula sobre el rendimiento **bruto**, no sobre el neto de perdidas: la
-pregunta operativa es cuantas cajas llevar al campo, y sobran mejor que faltan.
+Sobre el rendimiento **bruto**, no sobre el neto de perdidas: la pregunta
+operativa es cuantas cajas llevar al campo, y sobran mejor que faltan.
 
-Pendiente de decidir en fase 9, cuando haya cosechas reales con las que
-comparar: si el error sistematico es alto, se recalcula sobre el neto.
+El rendimiento se redondea a 4 decimales **antes** de dividir. Es deliberado:
+`ceil(12.000000000000002 / 6)` da 3 cajas en vez de 2, y las cajas que se
+guardan tienen que corresponder al rendimiento que se guarda.
 
 ## 3. Perdida estimada
 
-Aditivo, porque las causas de perdida se acumulan:
+Aditivo, al reves que el rendimiento, porque las causas de perdida se acumulan:
 
 ```
-base_loss     = 3.0                                # manejo y postcosecha, inevitable
+base_loss     = 3.0                                # manejo y postcosecha
 terrain_loss  = 12.0 * slope_norm                  # erosion, dificultad de recoleccion
-health_loss   = 25.0 * (1 - health_factor)         # la causa dominante
+health_loss   = 25.0 * (1 - health_factor)         # causa dominante
 soil_loss     = 10.0 * (1 - soil_quality)
 
 estimated_loss_percentage = clip(suma, 0, 100)
 ```
 
-Maximo teorico: 3 + 12 + 25 + 10 = 50%. El `clip` esta igualmente, porque un
+Maximo teorico: 3 + 12 + 25 + 10 = **50%**. El `clip` esta igualmente, porque un
 cambio de pesos no puede permitirse producir 130% de perdida.
 
 ## 4. Riesgo
@@ -114,10 +142,8 @@ Los pesos **suman 1.00**, y cada termino esta en 0..1, asi que `risk_score` cae
 en 0..1 por construccion y no por recorte.
 
 Sanidad pesa mas que suelo, y suelo mas que terreno: la sanidad es lo que puede
-cambiar de una semana a otra y lo que un agronomo puede actuar; el terreno es
-una condicion fija.
-
-Bucket cualitativo (definido una sola vez, en `app/domain/units.py`):
+cambiar de una semana a otra y sobre lo que un agronomo puede actuar; el terreno
+es una condicion fija.
 
 | `risk_score` | `risk_level` |
 |---|---|
@@ -125,39 +151,126 @@ Bucket cualitativo (definido una sola vez, en `app/domain/units.py`):
 | 0.33 .. 0.66 | `medium` |
 | >= 0.66 | `high` |
 
+Los umbrales viven en `app/domain/units.py`, definidos una sola vez.
+
 ## Salida
 
 ```json
 {
-  "cell_id": "A-00123",
-  "projected_yield_kg": 18.4,
-  "projected_yield_tons": 0.0184,
-  "projected_boxes": 4,
-  "estimated_loss_percentage": 7.8,
-  "risk_score": 0.21,
+  "cell_id": "5f3a…",
+  "cell_code": "A-00240",
+  "projected_yield_kg": 11.9634,
+  "projected_yield_tons": 0.0119634,
+  "projected_boxes": 2,
+  "estimated_loss_percentage": 9.18,
+  "risk_score": 0.1492,
   "risk_level": "low",
   "model_version": "rule-based-v0.1",
   "factors": {
-    "density_factor": 0.95,
-    "soil_factor": 1.10,
-    "health_factor": 0.85,
-    "terrain_factor": 0.92,
-    "base_yield_factor": 1.00
+    "density_factor": 1.0604,
+    "soil_factor": 1.0610,
+    "health_factor": 0.9290,
+    "terrain_factor": 0.9662,
+    "base_yield_factor": 0.9872
   }
 }
 ```
 
-`factors` no es decoracion: es lo que hace la prediccion auditable.
+`factors` no es decoracion: es lo que hace la prediccion auditable. El producto
+de los cinco factores por el potencial del cultivo reconstruye exactamente
+`projected_yield_kg`, y hay un test que lo comprueba.
 
-## Invariantes que la fase 3 debe testear
+`PredictionResult` valida sus invariantes **al construirse**: es imposible que
+exista un resultado con perdida del 130%, rendimiento negativo o un `risk_level`
+que no corresponda a su `risk_score`.
 
-- `projected_yield_kg >= 0`
-- `0 <= estimated_loss_percentage <= 100`
-- `0 <= risk_score <= 1`
-- `projected_boxes >= 0`
-- misma entrada -> misma salida (determinismo)
-- `model_version` siempre presente
-- `risk_level` coherente con `risk_score`
+---
+
+## Propiedades conocidas del modelo v0.1
+
+Comportamientos reales, no fallos. Se documentan para que nadie los descubra
+como sorpresa en la fase 5.
+
+### La sanidad sola no alcanza riesgo alto
+
+`HEALTH_WEIGHT` es 0.45 y el umbral `high` es 0.66. Una celda con el cultivo
+**muerto** pero buen suelo y terreno plano sale `medium`, no `high`.
+
+No es incoherente: `risk_score` mide *cuantos factores de riesgo hay presentes*,
+no *como de malo es el desenlace*. El desenlace ya lo dicen
+`projected_yield_kg` (0 kg) y `estimated_loss_percentage`. Para llegar a `high`
+hacen falta al menos dos factores malos a la vez.
+
+Si al validar contra cosechas reales resulta contraintuitivo, se sube
+`HEALTH_WEIGHT` y se publica `rule-based-v0.2`.
+
+### El dataset sintetico no produce ninguna celda de riesgo alto
+
+Ejecutando el motor sobre las 400 celdas de Plot A con la seed 42:
+
+```
+risk_score   min 0.1357 | medio 0.3867 | max 0.5997
+riesgo low      136 celdas
+riesgo medium   264 celdas
+riesgo high       0 celdas
+```
+
+La causa esta en el generador, no en el motor: `TerrainProfile` nunca lleva la
+sanidad por debajo de ~0.50 ni el suelo por debajo de ~0.44, asi que el maximo
+alcanzable ronda 0.60.
+
+Consecuencia practica: **la vista de riesgo del frontend solo mostrara dos de los
+tres colores** con estos datos. Decision pendiente antes de la fase 5 — las
+opciones son endurecer `TerrainProfile` (mas realista: las fincas tienen zonas
+malas), bajar el umbral `high`, o dejarlo y aceptar que la demo no ejercita el
+caso rojo. Ver [decisions.md](decisions.md) D-017.
+
+---
+
+## Supuestos puramente sinteticos
+
+**Ninguna** de estas constantes procede de literatura agronomica ni de medicion
+de campo. Todas estan marcadas con `SUPUESTO SINTETICO` en el codigo.
+
+| Constante | Valor | Donde | Que asume |
+|---|---|---|---|
+| `SLOPE_REFERENCE_DEG` | 15° | `features.py` | pendiente de penalizacion maxima |
+| `DENSITY_FACTOR_CAP` | 1.15 | `yield_model.py` | techo del beneficio de sobresembrar |
+| `SOIL_FACTOR_FLOOR` / `SPAN` | 0.70 / 0.50 | `yield_model.py` | el suelo mueve el rendimiento entre -30% y +20% |
+| `TERRAIN_SLOPE_PENALTY` | 0.25 | `yield_model.py` | la pendiente maxima cuesta un 25% del rendimiento |
+| `BASE_LOSS_PCT` | 3.0 | `loss.py` | perdida de manejo inevitable |
+| `TERRAIN_LOSS_PCT` | 12.0 | `loss.py` | perdida maxima por erosion y recoleccion |
+| `HEALTH_LOSS_PCT` | 25.0 | `loss.py` | perdida maxima por sanidad |
+| `SOIL_LOSS_PCT` | 10.0 | `loss.py` | perdida maxima por suelo |
+| `HEALTH/SOIL/SLOPE_WEIGHT` | 0.45 / 0.30 / 0.25 | `risk.py` | orden de importancia del riesgo |
+| `RISK_MEDIUM/HIGH_THRESHOLD` | 0.33 / 0.66 | `domain/units.py` | corte en tercios del rango |
+| `base_yield_kg_per_m2` | 12.0 | dataset | rendimiento de referencia del tomate |
+| `box_capacity_kg` | 6.0 | dataset | kg por caja |
+| `optimal_plant_density_per_m2` | 2.5 | dataset | densidad optima del tomate |
+
+Ademas, el modelo **ignora por completo** clima, riego, fertilizacion, fecha
+dentro del ciclo, variedad, historico de la parcela y cualquier interaccion
+entre variables. Los cuatro factores de rendimiento se asumen **independientes**,
+que es casi con seguridad falso en agronomia real (suelo pobre y estres hidrico
+no se multiplican limpiamente).
+
+## Cobertura de tests
+
+`tests/unit/test_prediction.py`, `test_loss.py`, `test_risk.py` y
+`test_prediction_dataset.py`:
+
+- celda optima, media y deficiente
+- densidad alta (techo), baja (proporcional) y cero
+- elevacion (no influye) y pendiente (satura en la referencia)
+- sanidad baja y cultivo muerto
+- limites de perdida y de riesgo, barridos parametrizados
+- cajas: redondeo hacia arriba y escala con el area
+- determinismo, incluido sobre las 400 celdas del dataset
+- `model_version` presente
+- factores: reconstruyen el rendimiento y exponen los cinco documentados
+- coherencia: tres celdas distintas se ordenan de forma monotona en rendimiento,
+  perdida y riesgo
+- validacion: entradas imposibles fallan al construirse
 
 ## Lo que este modelo NO hace
 

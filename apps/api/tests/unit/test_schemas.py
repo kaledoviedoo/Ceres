@@ -119,3 +119,48 @@ def test_harvest_derives_tons():
         created_at=datetime.now(timezone.utc),
     )
     assert harvest.actual_yield_tons == pytest.approx(0.0162)
+
+
+# --- Compatibilidad entre el motor (fase 3) y el contrato de API (fase 1) -----
+
+
+def test_engine_output_fits_the_api_schema():
+    """Todo PredictionResult del motor debe poder serializarse como PredictionRead."""
+    from app.core.prediction import predict
+    from tests.factories import AVERAGE_CELL, OPTIMAL_CELL, POOR_CELL, FakeCrop
+
+    for cell in (OPTIMAL_CELL, AVERAGE_CELL, POOR_CELL):
+        result = predict(cell, FakeCrop())
+        schema = PredictionRead(
+            **_prediction_payload(
+                projected_yield_kg=result.projected_yield_kg,
+                projected_boxes=result.projected_boxes,
+                estimated_loss_percentage=result.estimated_loss_percentage,
+                risk_score=result.risk_score,
+                risk_level=result.risk_level,
+                factors=result.factors.as_dict(),
+            )
+        )
+        assert schema.projected_yield_kg == result.projected_yield_kg
+
+
+def test_schema_accepts_zero_health_and_density_factors():
+    """Una celda con el cultivo muerto produce factores 0: no puede rechazarse."""
+    from app.core.prediction import predict
+    from tests.factories import FakeCrop, make_cell
+
+    result = predict(make_cell(health_factor=0.0, plant_density=0.0), FakeCrop())
+    assert result.projected_yield_kg == 0.0
+
+    schema = PredictionRead(
+        **_prediction_payload(
+            projected_yield_kg=0.0,
+            projected_boxes=0,
+            estimated_loss_percentage=result.estimated_loss_percentage,
+            risk_score=result.risk_score,
+            risk_level=result.risk_level,
+            factors=result.factors.as_dict(),
+        )
+    )
+    assert schema.factors.health_factor == 0.0
+    assert schema.factors.density_factor == 0.0

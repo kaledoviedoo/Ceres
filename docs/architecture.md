@@ -42,7 +42,7 @@ ceres/
 │       ├── app/
 │       │   ├── domain/        vocabulario compartido (enums, umbrales)
 │       │   ├── core/
-│       │   │   ├── prediction/  motor de prediccion (fase 3)
+│       │   │   ├── prediction/  motor de prediccion (implementado)
 │       │   │   └── synthetic/   generador de datos deterministas
 │       │   ├── models/        mapeo de persistencia (SQLAlchemy)
 │       │   ├── schemas/       contrato publico de la API (Pydantic)
@@ -92,6 +92,9 @@ un notebook y sustituirlo por un modelo estadistico sin tocar nada mas.
    400 celdas. Nunca una peticion por celda.
 5. **Nada de datos sinteticos hardcodeados en componentes.** Todo dato de demo
    sale del generador determinista.
+6. **El motor no importa nada de infraestructura.** Ni FastAPI, ni SQLAlchemy,
+   ni red. Recibe protocolos estructurales (`CellState`, `CropSpec`), asi que un
+   `GridCell` real sirve y un dataclass de tres lineas tambien.
 
 ## Que deja preparado esta arquitectura (sin implementarlo)
 

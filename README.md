@@ -13,10 +13,14 @@ ESTADO  ->  PREDICCION  ->  OBSERVACION  ->  COSECHA  ->  VALIDACION
 > generados por un script. Las cifras existen para validar el sistema
 > tecnicamente.
 >
-> CERES **no** predice rendimiento agricola real. Lo que hace, en palabras
-> exactas: *"CERES prototype estimates yield using a deterministic synthetic
-> model."* Hasta que haya datos reales y validacion experimental, no se afirma
-> nada mas fuerte que eso.
+> El motor de prediccion es un **modelo experimental y demostrativo**, no una
+> prediccion agronomica cientificamente validada. En palabras exactas:
+> *"CERES prototype estimates yield using a deterministic synthetic model."*
+> Hasta que haya datos reales y validacion experimental, no se afirma nada mas
+> fuerte que eso.
+>
+> Los supuestos sinteticos del modelo estan listados uno a uno en
+> [prediction-model.md](docs/prediction-model.md#supuestos-puramente-sinteticos).
 
 ---
 
@@ -27,8 +31,8 @@ ESTADO  ->  PREDICCION  ->  OBSERVACION  ->  COSECHA  ->  VALIDACION
 | 0 | Inspeccion y arquitectura | ✅ |
 | 1 | Modelo de dominio, schemas, tipos | ✅ |
 | 2 | Migraciones, seeds, dataset sintetico | ✅ |
-| 3 | Motor de prediccion `predict()` | ⬜ siguiente |
-| 4 | Endpoints FastAPI | ⬜ |
+| 3 | Motor de prediccion `predict()` | ✅ |
+| 4 | Endpoints FastAPI | ⬜ siguiente |
 | 5 | Frontend 2D (grid 20x20) | ⬜ |
 | 6 | Integracion Next.js ↔ FastAPI | ⬜ |
 | 7 | React Three Fiber | ⬜ |
@@ -36,9 +40,9 @@ ESTADO  ->  PREDICCION  ->  OBSERVACION  ->  COSECHA  ->  VALIDACION
 | 9 | Cosechas y error de prediccion | ⬜ |
 | 10 | Historico prediccion vs realidad | ⬜ |
 
-Lo que hay ahora: el modelo de dominio completo, el esquema de base de datos y
-un generador de finca sintetica reproducible. El motor de prediccion tiene sus
-contratos definidos pero todavia no calcula.
+Lo que hay ahora: el modelo de dominio completo, el esquema de base de datos,
+un generador de finca sintetica reproducible y el motor de prediccion
+funcionando y testeado. Todavia no hay API ni frontend.
 
 ---
 
@@ -102,6 +106,7 @@ pytest
 | `py scripts/generate_demo_data.py --apply` | Ademas lo ejecuta en la BD |
 | `py scripts/generate_demo_data.py --seed 7` | Otra finca, igual de reproducible |
 | `psql "$DATABASE_URL" -f scripts/reset_demo_data.sql` | Vacia todas las tablas |
+| `py scripts/preview_predictions.py` | Predice las 400 celdas y muestra 3 ejemplos |
 | `cd apps/api && pytest` | Tests |
 
 ---
@@ -113,7 +118,7 @@ ceres/
 ├── apps/api/app/
 │   ├── domain/         enums y umbrales compartidos
 │   ├── core/
-│   │   ├── prediction/ contratos del motor (fase 3)
+│   │   ├── prediction/ motor: features, yield, loss, risk, boxes, engine
 │   │   └── synthetic/  generador determinista de terreno
 │   ├── models/         SQLAlchemy — persistencia
 │   ├── schemas/        Pydantic — contrato de API
@@ -136,8 +141,15 @@ ceres/
 **El frontend no calcula agricultura.**
 
 React Three Fiber hace hover, click, seleccion, colores y camara. Toda formula
-—rendimiento, perdida, riesgo— vive en Python. El backend devuelve valores; el
-frontend decide como pintarlos.
+—rendimiento, perdida, riesgo— vive en Python, en
+`apps/api/app/core/prediction/`. El backend devuelve valores; el frontend decide
+como pintarlos.
+
+```python
+from app.core.prediction import predict
+
+result = predict(cell, crop, area_m2=1.0)
+```
 
 ---
 
@@ -147,7 +159,7 @@ frontend decide como pintarlos.
 |---|---|
 | [architecture.md](docs/architecture.md) | Capas, reglas invariantes, que deja preparado |
 | [data-model.md](docs/data-model.md) | Entidades, relaciones, tablas |
-| [prediction-model.md](docs/prediction-model.md) | Formulas (disenadas, fase 3) |
+| [prediction-model.md](docs/prediction-model.md) | Formulas, supuestos sinteticos, propiedades conocidas |
 | [synthetic-data.md](docs/synthetic-data.md) | Como se genera la finca ficticia |
 | [api.md](docs/api.md) | Contrato de endpoints |
 | [decisions.md](docs/decisions.md) | Por que el sistema es como es |

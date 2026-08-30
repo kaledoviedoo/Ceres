@@ -23,9 +23,13 @@ class PredictionFactors(CeresORMSchema):
     1.0 = neutro, >1 lo sube, <1 lo baja.
     """
 
-    density_factor: float = Field(gt=0)
+    # density y health pueden ser 0: una celda sin sembrar o con el cultivo
+    # muerto produce 0 kg, y ese resultado tiene que poder serializarse.
+    density_factor: float = Field(ge=0)
+    health_factor: float = Field(ge=0)
+    # Los otros tres son estructuralmente positivos: soil_factor parte de 0.70,
+    # terrain_factor de 0.75 y base_yield_factor de la celda, que es > 0.
     soil_factor: float = Field(gt=0)
-    health_factor: float = Field(gt=0)
     terrain_factor: float = Field(gt=0)
     base_yield_factor: float = Field(gt=0)
 
