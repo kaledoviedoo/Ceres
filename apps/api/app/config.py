@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # Datos sinteticos: seed fija => dataset reproducible
     ceres_demo_seed: int = Field(default=42, ge=0)
 
+    # Base de datos de pruebas. Si es None, los tests marcados `postgres` se
+    # saltan: nunca fallan por falta de credenciales ni tocan una base real por
+    # accidente.
+    test_database_url: str | None = None
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.api_cors_origins.split(",") if origin.strip()]
