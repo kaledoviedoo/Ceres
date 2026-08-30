@@ -25,3 +25,6 @@ database/seeds/*.sql
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Ajustes locales de Claude Code (por maquina)
+.claude/settings.local.json
