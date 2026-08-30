@@ -311,6 +311,96 @@ datos no acumula predicciones sobre pares celda/ciclo que no significan nada.
 
 ---
 
+## D-021 — RLS activado sin politicas (deny-all para PostgREST)
+
+**Decision.** `0004_security_hardening.sql` activa RLS en las 11 tablas sin
+crear ni una politica.
+
+**Por que.** Al desplegar por primera vez contra un Supabase real, el linter
+reporto RLS desactivado en las 10 tablas del dominio. Supabase publica el
+esquema `public` automaticamente por PostgREST, asi que cualquiera con la anon
+key —publica por diseno, acaba en el bundle del frontend— podria leer y escribir
+todo. En un PostgreSQL normal esto no pasa; en Supabase si, y es facil no verlo.
+
+RLS sin politicas es deny-all para PostgREST. El backend no se ve afectado
+porque conecta por `DATABASE_URL` con el rol propietario de las tablas, que no
+esta sujeto a RLS (no se usa FORCE ROW LEVEL SECURITY).
+
+**Lo que NO es.** No es el sistema de permisos del producto. Eso llega cuando
+haya autenticacion real y politicas por organizacion. Esto solo cierra una
+puerta que Supabase abre por defecto.
+
+**Coste.** El linter deja un INFO permanente ("RLS enabled, no policy"). Es el
+estado correcto, no un pendiente.
+
+---
+
+## D-022 — La conexion directa de Supabase resuelve solo por IPv6
+
+**Hallazgo.** `db.<ref>.supabase.co` tiene registro AAAA pero no A. En una red
+sin IPv6 global, la conexion directa simplemente no resuelve.
+
+**Situacion actual.** La maquina de desarrollo tiene IPv6 y funciona. No se
+adopta el pooler porque no hace falta y porque su hostname varia entre
+proyectos: adivinarlo habria sido peor que usar la URI que da el dashboard.
+
+**Si falla en otra red.** Copiar la connection string del pooler desde
+Dashboard > Project Settings > Database. El resto de la configuracion no cambia.
+
+**Dos ajustes obligatorios** sobre la URI que da Supabase, documentados en
+`.env.example`:
+
+- `postgresql+psycopg://` en vez de `postgresql://`: SQLAlchemy interpreta el
+  segundo como psycopg2, que no esta instalado.
+- `?sslmode=require`: cifrado en transito.
+
+---
+
+## D-023 — Los tests de PostgreSQL comparten base con la aplicacion
+
+**Decision.** `TEST_DATABASE_URL` apunta a la misma base que `DATABASE_URL`.
+
+**Por que.** El proyecto `ceres-mvp` existe solo para esto y todos sus datos son
+sinteticos y regenerables. Crear un segundo proyecto solo para tests seria
+infraestructura que nadie va a mantener en un MVP.
+
+**Lo que obliga.** La limpieza tiene que ser quirurgica, y descubrirlo costo un
+fallo real: la primera version hacia `TRUNCATE observations`, lo que habria
+borrado las 24 del seed y roto el test que las cuenta, con el resultado
+dependiendo del orden de ejecucion. Ahora:
+
+- `predictions` y `harvests` se vacian con TRUNCATE (el seed no crea filas ahi;
+  TRUNCATE y no DELETE porque el trigger bloquea el DELETE).
+- `observations` no se vacia: solo se borran las creadas por los tests, que se
+  distinguen porque llegan por la API y aun no llevan autor
+  (`created_by IS NULL`).
+
+**Cuando deja de valer.** En cuanto exista autenticacion, `created_by` dejara de
+discriminar y habra que separar las bases o marcar las filas de test de otra
+forma. Anotado en `tests/postgres/conftest.py`.
+
+---
+
+## D-024 — `text()` no sirve para SQL con literales que llevan `:`
+
+**Hallazgo.** Dos bugs del mismo origen, ambos latentes hasta ejecutar contra
+PostgreSQL real:
+
+- `generate_demo_data.py --apply` usaba `text(sql)`, y el seed contiene
+  timestamps como `'2026-04-20T14:00:00+00:00'`. SQLAlchemy leia cada `:` como
+  un parametro de vinculacion.
+- Un fixture insertaba JSONB inline (`'{"soil_factor":1.06}'`), con el mismo
+  resultado.
+
+**Correccion.** Para SQL crudo con literales, `exec_driver_sql()`. Para valores
+dinamicos, parametros vinculados de verdad (`CAST(:factors AS jsonb)`), nunca
+interpolacion.
+
+**Leccion.** El codigo que solo se ejecuta contra un motor distinto al de
+produccion no esta probado. Ninguno de los dos bugs podia aparecer en SQLite.
+
+---
+
 ## Relacionado
 
 - [architecture.md](architecture.md)

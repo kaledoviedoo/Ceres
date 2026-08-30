@@ -193,53 +193,112 @@ comprueba en el servicio, no en el schema, porque requiere leer la base de datos
 
 ---
 
-## Que se ha probado y contra que
+## Los tres entornos de verificacion
 
-> Esta seccion es importante. **No hay Docker en la maquina de desarrollo**, asi
-> que nada se ha ejecutado contra PostgreSQL de verdad.
+```
+Desarrollo local            Entorno real
+      |                          |
+      v                          v
+  SQLite en memoria        Supabase PostgreSQL 17
+  (tests/integration)      (tests/postgres)
+  259 tests, ~2 s          31 tests, ~60 s
+  sin credenciales         requiere TEST_DATABASE_URL
+```
 
-### Verificado — SQLite en memoria (60 tests de integracion)
-
-El esquema lo levanta el ORM con `Base.metadata.create_all()`.
-
-- cableado completo HTTP -> servicio -> motor -> ORM -> respuesta
-- que el resultado del endpoint coincide **exactamente** con ejecutar `predict()`
-  a mano sobre la misma celda
-- persistencia: cada POST crea una fila y no sobrescribe las anteriores
-- schemas de request y response, incluido el rechazo de campos extra
-- 404, 409 y 422
-- el ciclo completo prediccion -> cosecha -> error
-
-### Verificado — servidor real (smoke test manual)
-
-`uvicorn app.main:app` arranca, `/docs` responde 200, las 13 rutas aparecen en
-`/openapi.json`, y `/api/v1/health` devuelve 200 con `database: "unavailable"`
-cuando no hay base de datos detras.
-
-### PENDIENTE — requiere PostgreSQL / Supabase real
-
-Nada de esto se ha ejecutado ni una vez:
-
-| Que | Por que no se puede en SQLite |
-|---|---|
-| Las migraciones de `database/migrations/` | en los tests el esquema lo crea el ORM, no el SQL |
-| El trigger de inmutabilidad (0002) | es PL/pgSQL |
-| La vista `cell_performance` (0003) | usa `LEFT JOIN LATERAL` |
-| Los CHECK constraints tal como los escribe el SQL | SQLite no los aplica igual |
-| Tipos nativos `uuid`, `jsonb`, `timestamptz` | SQLite usa CHAR(32), JSON de texto y datetime naive |
-| El seed `database/seeds/0001_demo_data.sql` | solo se ha validado por parsing |
-| Comportamiento del pool de conexiones | SQLite usa `StaticPool` |
-
-Primer paso en cuanto haya un Postgres disponible:
+| Nivel | Directorio | Base de datos | Cuando corre |
+|---|---|---|---|
+| Unit | `tests/unit/` | ninguna | siempre |
+| Integracion | `tests/integration/` | SQLite en memoria | siempre |
+| PostgreSQL | `tests/postgres/` | Supabase real | solo con `TEST_DATABASE_URL` |
 
 ```bash
-docker compose up -d db
-py scripts/apply_migrations.py
-py scripts/generate_demo_data.py --apply
-cd apps/api && uvicorn app.main:app --reload
-# y despues: POST /api/v1/predictions, seguido de un UPDATE manual sobre
-# predictions para comprobar que el trigger de 0002 lo rechaza.
+pytest                    # todo; los de postgres se saltan si no hay credenciales
+pytest -m "not postgres"  # rapido, sin tocar nada remoto
+pytest -m postgres        # solo contra Supabase
 ```
+
+Los tests de `tests/postgres/` **se saltan solos** si `TEST_DATABASE_URL` no esta
+definida. Nunca fallan por falta de credenciales y nunca tocan una base real por
+accidente.
+
+### Por que sigue existiendo el nivel SQLite
+
+Podria parecer redundante ahora que hay Postgres real. No lo es: los tests
+SQLite corren en 2 segundos sin red y sin credenciales, asi que se pueden
+ejecutar en cada guardado. Los de Postgres tardan un minuto y necesitan
+conexion. Se conservan los dos niveles a proposito.
+
+## Verificado contra Supabase (fase 4.5)
+
+Proyecto `ceres-mvp`, PostgreSQL 17.6, region us-east-1.
+
+| Que | Resultado |
+|---|---|
+| Migraciones 0001–0004 | aplicadas; 11 tablas, 1 vista, 15 FK, 25 CHECK, 7 UNIQUE |
+| Seed sintetico | 1 finca, 2 lotes, **800 celdas** (400+400), 24 observaciones |
+| Valores del seed | identicos al generador tras el viaje de ida y vuelta |
+| Tipos nativos | `uuid`, `jsonb` (consultable con `->>`), `timestamptz` con zona |
+| CHECK constraints | rechazan con `23514` |
+| Foreign keys | rechazan con `23503` |
+| UNIQUE | rechazan con `23505` |
+| Trigger de inmutabilidad | UPDATE y DELETE rechazados con `23001`; valor intacto |
+| Vista `cell_performance` | identica a la capa Python hasta el ultimo decimal |
+| Integridad Plot ↔ CropCycle | 409, como en SQLite |
+| API completa | los 13 endpoints contra Postgres real |
+| Ciclo end-to-end | prediccion → cosecha → performance |
+
+### El trigger, textualmente
+
+```sql
+UPDATE predictions SET projected_yield_kg = 9999 WHERE id = '…';
+```
+
+```
+ERROR:  23001: Las predicciones son inmutables: no se puede update la fila
+        11111111-1111-1111-1111-111111111111. Inserta una prediccion nueva.
+CONTEXT:  PL/pgSQL function ceres_reject_prediction_mutation() line 3 at RAISE
+```
+
+`DELETE` produce el mismo error con `delete` en el texto. Tras ambos intentos, el
+valor seguia siendo `11.9634`.
+
+### Python vs SQL, sobre la misma fila
+
+| | `absolute_error_kg` | `percentage_error` |
+|---|---|---|
+| `app/domain/performance.py` (API) | 1.5634 | 15.0327 |
+| Vista `cell_performance` (SQL) | 1.5634 | 15.0327 |
+
+Sin diferencias. El riesgo de divergencia de [D-018](decisions.md) sigue siendo
+real a futuro, pero ahora hay un test que lo detectaria
+(`test_sql_view_matches_the_python_layer`).
+
+## Conexion
+
+Supabase da la conexion directa `db.<ref>.supabase.co:5432`, que resuelve **solo
+por IPv6** (registro AAAA, sin A). Funciona desde una maquina con IPv6 global; en
+una red sin IPv6 hay que usar el pooler del dashboard. Dos ajustes obligatorios
+sobre la URI que da Supabase:
+
+- `postgresql+psycopg://` en vez de `postgresql://` — SQLAlchemy interpreta el
+  segundo como psycopg2, que no esta instalado.
+- `?sslmode=require` — cifrado en transito.
+
+## Aislamiento de los tests de PostgreSQL
+
+En el MVP `TEST_DATABASE_URL` apunta a la **misma** base que `DATABASE_URL`: el
+proyecto `ceres-mvp` existe solo para esto y todos sus datos son sinteticos.
+
+Eso obliga a que la limpieza sea quirurgica:
+
+- `predictions` y `harvests` se vacian con TRUNCATE — el seed no crea ninguna
+  fila ahi. TRUNCATE y no DELETE porque el trigger bloquea el DELETE.
+- `observations` **no** se vacia: el seed carga 24. Las creadas por los tests se
+  distinguen porque llegan por la API, que aun no asigna autor
+  (`created_by IS NULL`).
+
+Cuando exista autenticacion, `created_by` dejara de servir como discriminador y
+habra que separar las bases.
 
 ## Relacionado
 

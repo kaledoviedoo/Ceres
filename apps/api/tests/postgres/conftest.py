@@ -12,19 +12,33 @@ pytest -m postgres           # solo estos
 pytest -m "not postgres"     # todo lo demas
 ```
 
-## Advertencia
+## Advertencia y aislamiento
 
 Estos tests **escriben** en la base de datos apuntada por `TEST_DATABASE_URL`.
-Usa un proyecto desechable, nunca uno con datos que te importen. Cada test
-limpia lo que crea, pero un fallo a mitad puede dejar filas sueltas.
+Usa un proyecto desechable, nunca uno con datos que te importen.
 
-Las predicciones son la excepcion: el trigger de inmutabilidad impide borrarlas
-con DELETE, asi que la limpieza usa TRUNCATE, que no dispara triggers de fila.
+En el MVP `TEST_DATABASE_URL` apunta a la MISMA base que `DATABASE_URL`: el
+proyecto Supabase `ceres-mvp` existe solo para esto y sus datos son sinteticos.
+Eso obliga a que la limpieza sea quirurgica:
+
+- `predictions` y `harvests` se vacian con TRUNCATE. El seed no crea ninguna
+  fila en esas tablas, asi que vaciarlas no destruye nada. TRUNCATE y no DELETE
+  porque el trigger de inmutabilidad bloquea el DELETE sobre `predictions`: es
+  justo la friccion que se busco al escribirlo.
+- `observations` NO se vacia. El seed carga 24 y hay un test que las cuenta. Las
+  creadas por los tests se distinguen porque llegan por la API, que todavia no
+  asigna autor (`created_by IS NULL`), mientras que las del seed llevan el
+  usuario agronomo. Solo se borran las primeras.
+
+Cuando exista autenticacion, `created_by` dejara de servir como discriminador y
+habra que separar las bases o marcar las filas de test de otra forma.
 """
 
 from __future__ import annotations
 
+import json
 import os
+import pathlib
 from collections.abc import Iterator
 
 import pytest
@@ -48,14 +62,28 @@ def _test_database_url() -> str | None:
 
 TEST_DATABASE_URL = _test_database_url()
 
-#: Se aplica a todos los tests del paquete: marca + skip automatico.
-pytestmark = [
-    pytest.mark.postgres,
-    pytest.mark.skipif(
-        not TEST_DATABASE_URL,
-        reason="TEST_DATABASE_URL no definida: se omiten los tests contra PostgreSQL real",
-    ),
-]
+def pytest_collection_modifyitems(config, items):
+    """Marca `postgres` y salta todo lo de este directorio si no hay credenciales.
+
+    Un `pytestmark` a nivel de conftest NO se propaga a los modulos de test; hay
+    que hacerlo con este hook. Se filtra por ruta para no marcar los tests de
+    unit/ ni de integration/.
+    """
+    here = pathlib.Path(__file__).parent
+    skip = pytest.mark.skip(
+        reason="TEST_DATABASE_URL no definida: se omiten los tests contra PostgreSQL real"
+    )
+
+    for item in items:
+        try:
+            item_path = pathlib.Path(str(item.fspath))
+        except AttributeError:  # pragma: no cover
+            continue
+        if here not in item_path.parents:
+            continue
+        item.add_marker(pytest.mark.postgres)
+        if not TEST_DATABASE_URL:
+            item.add_marker(skip)
 
 
 @pytest.fixture(scope="session")
@@ -107,16 +135,30 @@ def pg_client(pg_engine):
     app.dependency_overrides.clear()
 
 
-@pytest.fixture
-def cleanup_transactional_rows(pg_session):
-    """Borra predicciones, cosechas y observaciones creadas por un test.
+#: Limpieza que preserva el seed. Ver el aislamiento explicado arriba.
+CLEANUP_STATEMENTS = (
+    "TRUNCATE TABLE predictions, harvests",
+    "DELETE FROM observations WHERE created_by IS NULL",
+)
 
-    TRUNCATE y no DELETE porque el trigger de inmutabilidad bloquea el DELETE
-    sobre `predictions`. Es justo la friccion que se busco al escribirlo.
+
+def _clean(session) -> None:
+    session.rollback()
+    for statement in CLEANUP_STATEMENTS:
+        session.execute(text(statement))
+    session.commit()
+
+
+@pytest.fixture(autouse=True)
+def cleanup_transactional_rows(pg_session):
+    """Deja la base como estaba: seed intacto, filas de test borradas.
+
+    `autouse`: se aplica a todos los tests del paquete, antes y despues, para
+    que ninguno dependa del orden ni herede basura de otro.
     """
+    _clean(pg_session)
     yield
-    pg_session.execute(text("TRUNCATE TABLE predictions, harvests, observations"))
-    pg_session.commit()
+    _clean(pg_session)
 
 
 @pytest.fixture
@@ -144,22 +186,34 @@ def seeded_prediction(pg_session, seeded_cell, seeded_cycle):
 
     Se limpia con TRUNCATE porque el propio trigger impide borrarla con DELETE.
     """
+    # El JSON viaja como parametro, no como literal incrustado: dentro de
+    # `text()` cada `:` de un literal JSON ("soil_factor":1.06) se interpretaria
+    # como un parametro de vinculacion.
+    factors = json.dumps(
+        {
+            "density_factor": 1.0604,
+            "soil_factor": 1.0610,
+            "health_factor": 0.9290,
+            "terrain_factor": 0.9662,
+            "base_yield_factor": 0.9872,
+        }
+    )
+    inputs = json.dumps({"cell_code": "A-00240"})
+
     prediction_id = pg_session.execute(
         text("""
         INSERT INTO predictions (cell_id, crop_cycle_id, model_version, projected_yield_kg,
             projected_boxes, estimated_loss_percentage, risk_score, risk_level, factors, inputs)
         VALUES (:cell, :cycle, 'rule-based-v0.1', 11.9634, 2, 9.18, 0.1492, 'low',
-            '{"density_factor":1.0604,"soil_factor":1.0610,"health_factor":0.9290,
-              "terrain_factor":0.9662,"base_yield_factor":0.9872}'::jsonb,
-            '{"cell_code":"A-00240"}'::jsonb)
+            CAST(:factors AS jsonb), CAST(:inputs AS jsonb))
         RETURNING id
         """),
-        {"cell": seeded_cell, "cycle": seeded_cycle},
+        {
+            "cell": seeded_cell,
+            "cycle": seeded_cycle,
+            "factors": factors,
+            "inputs": inputs,
+        },
     ).scalar()
     pg_session.commit()
-
-    yield prediction_id
-
-    pg_session.rollback()
-    pg_session.execute(text("TRUNCATE TABLE predictions, harvests, observations"))
-    pg_session.commit()
+    return prediction_id

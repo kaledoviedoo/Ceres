@@ -44,10 +44,10 @@ Lo que hay ahora: el ciclo `celda -> motor -> API -> JSON` cerrado y testeado
 de extremo a extremo, sobre datos sinteticos reproducibles. Todavia no hay
 frontend.
 
-**Aviso sobre los tests:** no hay Docker en la maquina de desarrollo, asi que los
-tests de integracion corren sobre SQLite en memoria. Nada se ha ejecutado contra
-PostgreSQL real. La lista de lo que queda pendiente de verificar esta en
-[api.md](docs/api.md#que-se-ha-probado-y-contra-que).
+**Verificado contra Supabase real** (PostgreSQL 17, proyecto `ceres-mvp`):
+migraciones, seed de 800 celdas, constraints, trigger de inmutabilidad, vista
+`cell_performance` y los 13 endpoints. Detalle en
+[api.md](docs/api.md#verificado-contra-supabase-fase-45).
 
 ---
 
@@ -75,14 +75,19 @@ cp .env.example .env
 
 ### 3. Base de datos
 
+Local con Docker:
+
 ```bash
 docker compose up -d db
 py scripts/apply_migrations.py
 ```
 
-Para Supabase: cambia `DATABASE_URL` en `.env` por la connection string del
-panel y ejecuta el mismo comando. Los `.sql` de `database/migrations/` tambien
-se pueden pegar directamente en el editor SQL de Supabase.
+Supabase: copia la connection string de **Project Settings > Database** a
+`DATABASE_URL` y cambia dos cosas — `postgresql+psycopg://` en vez de
+`postgresql://`, y anade `?sslmode=require`. Despues, el mismo comando.
+
+Los `.sql` de `database/migrations/` tambien se pueden pegar directamente en el
+editor SQL de Supabase.
 
 ### 4. Datos de demo
 
@@ -146,7 +151,8 @@ ceres/
 │   └── db.py
 ├── apps/api/tests/
 │   ├── unit/           sin base de datos
-│   └── integration/    SQLite en memoria
+│   ├── integration/    SQLite en memoria
+│   └── postgres/       Supabase real (se salta sin credenciales)
 ├── database/
 │   ├── migrations/     SQL versionado (fuente de verdad del esquema)
 │   └── seeds/          generado, no versionado

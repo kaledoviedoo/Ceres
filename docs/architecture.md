@@ -18,6 +18,21 @@ DOMAIN / CORE (Python)    toda la logica agricola
 DATABASE (PostgreSQL)     estado e historia
 ```
 
+La misma aplicacion corre contra dos motores segun el entorno:
+
+```
+Desarrollo / CI rapido        Entorno real
+        |                          |
+        v                          v
+  SQLite en memoria          Supabase PostgreSQL 17
+  (solo para tests)          (desarrollo y produccion)
+```
+
+SQLite no es un motor soportado del producto: existe unicamente para que los
+tests de integracion corran en 2 segundos sin red ni credenciales. Todo lo
+especifico de PostgreSQL —trigger de inmutabilidad, vista `cell_performance`,
+tipos nativos, RLS— se verifica en `tests/postgres/` contra Supabase real.
+
 La flecha va en un solo sentido. Una capa nunca llama hacia arriba.
 
 ### La regla que no se negocia
@@ -53,7 +68,8 @@ ceres/
 │       │   └── db.py          engine y sesiones
 │       └── tests/
 │           ├── unit/          sin base de datos
-│           └── integration/   SQLite en memoria (no PostgreSQL: no hay Docker)
+│           ├── integration/   SQLite en memoria (rapido, sin credenciales)
+│           └── postgres/      Supabase real (se salta sin TEST_DATABASE_URL)
 ├── database/
 │   ├── migrations/        SQL versionado (fuente de verdad del esquema)
 │   └── seeds/             seed de demo GENERADO, no editar a mano

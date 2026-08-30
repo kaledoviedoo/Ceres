@@ -97,16 +97,25 @@ def render_seed(dataset: DemoDataset) -> str:
 
 
 def apply_to_database(sql: str) -> None:
-    """Ejecuta el seed contra la base de datos configurada en DATABASE_URL."""
-    from sqlalchemy import text
+    """Ejecuta el seed contra la base de datos configurada en DATABASE_URL.
 
+    Dos detalles que importan:
+
+    - `exec_driver_sql` y no `text()`. El seed contiene timestamps como
+      '2026-04-20T14:00:00+00:00', y `text()` interpretaria cada `:` como un
+      parametro de vinculacion. Se envia el SQL crudo al driver.
+    - AUTOCOMMIT, porque el archivo trae su propio BEGIN/COMMIT.
+
+    Solo se imprime el host, nunca la URL completa: lleva la contrasena.
+    """
     from app.config import get_settings
     from app.db import engine
 
     settings = get_settings()
-    print(f"-> Aplicando seed en {settings.database_url.split('@')[-1]}")
-    with engine.begin() as connection:
-        connection.execute(text(sql))
+    host = settings.database_url.split("@")[-1].split("?")[0]
+    print(f"-> Aplicando seed en {host}")
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.exec_driver_sql(sql)
     print("-> Seed aplicado")
 
 
