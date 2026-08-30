@@ -1,0 +1,22 @@
+# PostgreSQL local para desarrollo del MVP.
+# Supabase es Postgres, asi que lo que funcione aqui funciona alla.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: ceres-db
+    environment:
+      POSTGRES_USER: ceres
+      POSTGRES_PASSWORD: ceres
+      POSTGRES_DB: ceres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ceres-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ceres -d ceres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ceres-pgdata:

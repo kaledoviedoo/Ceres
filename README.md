@@ -1,0 +1,164 @@
+# CERES
+
+Digital Twin agricola. Representa una finca como una malla de celdas de ~1 m2 y
+cierra el ciclo:
+
+```
+ESTADO  ->  PREDICCION  ->  OBSERVACION  ->  COSECHA  ->  VALIDACION
+```
+
+> ## ⚠️ DEMO / SYNTHETIC DATA
+>
+> La finca de este repositorio **es ficticia** y todos sus datos son sinteticos y
+> generados por un script. Las cifras existen para validar el sistema
+> tecnicamente.
+>
+> CERES **no** predice rendimiento agricola real. Lo que hace, en palabras
+> exactas: *"CERES prototype estimates yield using a deterministic synthetic
+> model."* Hasta que haya datos reales y validacion experimental, no se afirma
+> nada mas fuerte que eso.
+
+---
+
+## Estado del proyecto
+
+| Fase | Contenido | Estado |
+|---|---|---|
+| 0 | Inspeccion y arquitectura | ✅ |
+| 1 | Modelo de dominio, schemas, tipos | ✅ |
+| 2 | Migraciones, seeds, dataset sintetico | ✅ |
+| 3 | Motor de prediccion `predict()` | ⬜ siguiente |
+| 4 | Endpoints FastAPI | ⬜ |
+| 5 | Frontend 2D (grid 20x20) | ⬜ |
+| 6 | Integracion Next.js ↔ FastAPI | ⬜ |
+| 7 | React Three Fiber | ⬜ |
+| 8 | Observaciones | ⬜ |
+| 9 | Cosechas y error de prediccion | ⬜ |
+| 10 | Historico prediccion vs realidad | ⬜ |
+
+Lo que hay ahora: el modelo de dominio completo, el esquema de base de datos y
+un generador de finca sintetica reproducible. El motor de prediccion tiene sus
+contratos definidos pero todavia no calcula.
+
+---
+
+## Puesta en marcha
+
+Requisitos: Python 3.11+, Docker (o una base de datos Supabase).
+
+### 1. Entorno virtual
+
+Se crea **fuera** del repositorio a proposito: el proyecto vive en una carpeta
+sincronizada por OneDrive, y un `.venv` dentro serian decenas de miles de
+archivos sincronizandose sin parar (ver [D-013](docs/decisions.md)).
+
+```bash
+py -m venv C:\Users\User\.virtualenvs\ceres
+C:\Users\User\.virtualenvs\ceres\Scripts\Activate.ps1
+pip install -r apps/api/requirements.txt
+```
+
+### 2. Configuracion
+
+```bash
+cp .env.example .env
+```
+
+### 3. Base de datos
+
+```bash
+docker compose up -d db
+py scripts/apply_migrations.py
+```
+
+Para Supabase: cambia `DATABASE_URL` en `.env` por la connection string del
+panel y ejecuta el mismo comando. Los `.sql` de `database/migrations/` tambien
+se pueden pegar directamente en el editor SQL de Supabase.
+
+### 4. Datos de demo
+
+```bash
+py scripts/generate_demo_data.py --apply
+```
+
+Genera 1 finca, 2 lotes, 800 celdas, 1 ciclo de cultivo y 24 observaciones.
+
+### 5. Tests
+
+```bash
+cd apps/api
+pytest
+```
+
+---
+
+## Comandos
+
+| Comando | Que hace |
+|---|---|
+| `py scripts/apply_migrations.py` | Aplica migraciones pendientes |
+| `py scripts/apply_migrations.py --status` | Solo informa del estado |
+| `py scripts/generate_demo_data.py` | Escribe `database/seeds/0001_demo_data.sql` |
+| `py scripts/generate_demo_data.py --apply` | Ademas lo ejecuta en la BD |
+| `py scripts/generate_demo_data.py --seed 7` | Otra finca, igual de reproducible |
+| `psql "$DATABASE_URL" -f scripts/reset_demo_data.sql` | Vacia todas las tablas |
+| `cd apps/api && pytest` | Tests |
+
+---
+
+## Estructura
+
+```
+ceres/
+├── apps/api/app/
+│   ├── domain/         enums y umbrales compartidos
+│   ├── core/
+│   │   ├── prediction/ contratos del motor (fase 3)
+│   │   └── synthetic/  generador determinista de terreno
+│   ├── models/         SQLAlchemy — persistencia
+│   ├── schemas/        Pydantic — contrato de API
+│   ├── config.py
+│   └── db.py
+├── apps/api/tests/unit/
+├── database/
+│   ├── migrations/     SQL versionado (fuente de verdad del esquema)
+│   └── seeds/          generado, no versionado
+├── scripts/
+└── docs/
+```
+
+`apps/web/` (Next.js) llega en la fase 5.
+
+---
+
+## La regla que sostiene todo
+
+**El frontend no calcula agricultura.**
+
+React Three Fiber hace hover, click, seleccion, colores y camara. Toda formula
+—rendimiento, perdida, riesgo— vive en Python. El backend devuelve valores; el
+frontend decide como pintarlos.
+
+---
+
+## Documentacion
+
+| Documento | Contenido |
+|---|---|
+| [architecture.md](docs/architecture.md) | Capas, reglas invariantes, que deja preparado |
+| [data-model.md](docs/data-model.md) | Entidades, relaciones, tablas |
+| [prediction-model.md](docs/prediction-model.md) | Formulas (disenadas, fase 3) |
+| [synthetic-data.md](docs/synthetic-data.md) | Como se genera la finca ficticia |
+| [api.md](docs/api.md) | Contrato de endpoints |
+| [decisions.md](docs/decisions.md) | Por que el sistema es como es |
+
+---
+
+## Criterio de exito del MVP
+
+Un agronomo entra al dashboard, elige finca → lote → ciclo, ve una malla de
+20 × 20, hace click en una celda, y CERES le devuelve rendimiento proyectado,
+cajas, perdida estimada, riesgo y los factores que lo explican. Despues registra
+una observacion, mas tarde la cosecha real, y CERES le dice cuanto se equivoco.
+
+Si eso funciona de extremo a extremo, el MVP es valido.

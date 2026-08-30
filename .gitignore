@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / Next.js (fase 5+)
+node_modules/
+.next/
+out/
+
+# Entorno
+.env
+.env.local
+.env.*.local
+
+# Datos generados (el seed se regenera con scripts/generate_demo_data.py)
+database/seeds/*.sql
+
+# Sistema
+.DS_Store
+Thumbs.db
+desktop.ini
