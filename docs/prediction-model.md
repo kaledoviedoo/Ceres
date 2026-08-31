@@ -204,26 +204,29 @@ hacen falta al menos dos factores malos a la vez.
 Si al validar contra cosechas reales resulta contraintuitivo, se sube
 `HEALTH_WEIGHT` y se publica `rule-based-v0.2`.
 
-### El dataset sintetico no produce ninguna celda de riesgo alto
+### El dataset sintetico llega a los tres niveles desde la fase 4.6
 
-Ejecutando el motor sobre las 400 celdas de Plot A con la seed 42:
+Hasta entonces no producia ninguna celda `high` (136 `low`, 264 `medium`, 0
+`high`), asi que la vista de riesgo del frontend solo habria podido mostrar dos
+de los tres colores.
+
+Se resolvio **sin tocar el modelo**: los pesos, los umbrales y las formulas de
+esta pagina son exactamente los mismos. Lo que cambio fue el generador
+sintetico, que ahora incluye una zona critica localizada. Ver
+[synthetic-data.md](synthetic-data.md#zona-critica--escenario-sintetico-de-estres).
+
+Distribucion actual sobre Plot A con la seed 42:
 
 ```
-risk_score   min 0.1357 | medio 0.3867 | max 0.5997
-riesgo low      136 celdas
-riesgo medium   264 celdas
-riesgo high       0 celdas
+risk_score   min 0.1357 | medio 0.4162 | max 0.9359
+riesgo low      134 celdas
+riesgo medium   232 celdas
+riesgo high      34 celdas
 ```
 
-La causa esta en el generador, no en el motor: `TerrainProfile` nunca lleva la
-sanidad por debajo de ~0.50 ni el suelo por debajo de ~0.44, asi que el maximo
-alcanzable ronda 0.60.
-
-Consecuencia practica: **la vista de riesgo del frontend solo mostrara dos de los
-tres colores** con estos datos. Decision pendiente antes de la fase 5 — las
-opciones son endurecer `TerrainProfile` (mas realista: las fincas tienen zonas
-malas), bajar el umbral `high`, o dejarlo y aceptar que la demo no ejercita el
-caso rojo. Ver [decisions.md](decisions.md) D-017.
+Un test desactiva la zona critica y comprueba que sin ella no queda ninguna
+celda `high`. Es lo que demuestra que el rojo sale del dataset y no de un umbral
+ajustado a conveniencia.
 
 ---
 

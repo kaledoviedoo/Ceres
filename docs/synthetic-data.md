@@ -31,6 +31,7 @@ regeneran el dataset obtienen exactamente los mismos `cell_id`.
 | Ciclo de cultivo | 1, sobre Plot A |
 | Celdas | 800 (400 por lote) |
 | Observaciones | 24 |
+| Zona critica | 1 foco sintetico por lote (ver abajo) |
 
 Plot B tiene terreno generado pero **no** tiene ciclo de cultivo. Es intencional:
 es exactamente el caso que justifica separar `CropCycle` de `Plot`, y deja un
@@ -116,6 +117,66 @@ density = 2.5 * (1 + 0.10*ruido) - 0.35*slope_norm     clip 0.2 .. 2.875
 
 Casi uniforme (se sembro toda la parcela igual), peor en pendiente.
 
+### Zona critica — ESCENARIO SINTETICO DE ESTRES
+
+> **Esto no es agronomia.** Es un caso de prueba dibujado a mano para que el
+> dataset produzca celdas de `risk_level = high` y la visualizacion pueda
+> ejercitar los tres niveles de riesgo. No representa un fenomeno observado, ni
+> una zona de una finca real, ni evidencia de nada.
+
+Hasta la fase 4.6 el dataset producia 136 celdas `low`, 264 `medium` y **ninguna
+`high`**: la vista de riesgo del frontend solo habria podido mostrar dos de los
+tres colores. Habia dos formas de arreglarlo y solo una es honesta.
+
+La deshonesta: bajar el umbral de `high` o subir el peso de la sanidad hasta que
+salieran celdas rojas. Eso es cambiar el modelo para que los datos queden
+bonitos, y de paso invalida cualquier comparacion futura.
+
+La que se hizo: dejar el modelo intacto y anadir al **generador** un foco de
+deterioro extremo.
+
+```
+health = ... - 0.75 * critical
+soil   = ... - 0.35 * critical
+elev   = ... - 0.60 m * critical
+
+critical = campana gaussiana en (nx=0.12, ny=0.72), sigma 0.10
+```
+
+Tres decisiones de diseno:
+
+1. **Es una campana, no un recorte.** Las celdas del nucleo son `high`, las de
+   alrededor `medium` y despues `low`. La transicion es continua y el mapa se lee
+   como un foco que se agrava, no como un parche pegado encima. Hay un test que
+   comprueba que el anillo que rodea al foco es `medium`.
+2. **Esta dentro del area de estres del oeste**, no en un punto cualquiera: la
+   zona peor de la finca se pone todavia peor, que es como se comporta un brote.
+3. **Tambien hunde el terreno.** Una hondonada de 60 cm, que ademas genera
+   pendiente en el borde. Importa para la fase 7: el terreno 3D se deforma con la
+   elevacion, y una zona critica plana se veria como una mancha pintada.
+
+Resultado, con la seed 42, sobre Plot A:
+
+```
+norte
+  oooooooooooo........
+  oooooooooooo........      . low      134 celdas
+  o####ooooooo........      o medium   232 celdas
+  ######oooooo........      # high      34 celdas
+  #######oooooo.......
+  #######oooooo.......      un solo foco contiguo,
+  ######ooooooo.oo....      x en [0,6], y en [12,17]
+  o####ooooooo........
+  oooooooooooo........
+  ...
+sur    oeste        este
+```
+
+Para desactivarla basta con poner a cero las tres penalizaciones de
+`TerrainProfile`. Un test hace exactamente eso y comprueba que sin la zona no
+queda ninguna celda `high`: es la prueba de que el `high` viene del dataset y no
+de haber tocado el modelo.
+
 ### Multiplicador residual
 
 ```
@@ -158,6 +219,18 @@ py scripts/generate_demo_data.py --stdout        # lo imprime sin escribir
 ```
 
 El seed generado esta en `.gitignore`: se regenera, no se versiona.
+
+### Reaplicar el seed es idempotente
+
+El archivo empieza borrando las filas que el propio seed produjo en
+generaciones anteriores y que ya no produce, antes de insertar las nuevas.
+
+Hace falta porque los `ON CONFLICT DO UPDATE` mantienen al dia lo que sigue
+existiendo pero no borran lo que dejo de existir. El id de una observacion sale
+de `(cell_code, orden)`, y que celdas se observan depende de cuales son las mas
+debiles: al introducir la zona critica cambio la seleccion y la base acabo con
+48 observaciones en vez de 24. La limpieza esta acotada a las filas con autor
+del seed, asi que las observaciones creadas por la API no se tocan.
 
 ## Relacionado
 

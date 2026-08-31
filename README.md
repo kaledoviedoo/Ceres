@@ -96,6 +96,12 @@ py scripts/generate_demo_data.py --apply
 ```
 
 Genera 1 finca, 2 lotes, 800 celdas, 1 ciclo de cultivo y 24 observaciones.
+Reaplicarlo es idempotente: converge al mismo estado, no lo acumula.
+
+El dataset incluye una **zona critica sintetica** que produce celdas de riesgo
+alto (134 `low`, 232 `medium`, 34 `high`). Es un escenario de prueba dibujado a
+mano para ejercitar la visualizacion, no evidencia agronomica; ver
+[synthetic-data.md](docs/synthetic-data.md#zona-critica--escenario-sintetico-de-estres).
 
 ### 5. Levantar la API
 

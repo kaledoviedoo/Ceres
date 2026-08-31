@@ -225,7 +225,7 @@ le pasaran objetos ORM: mas corto de escribir, imposible de testear aislado.
 
 ---
 
-## D-017 — El dataset sintetico no alcanza riesgo alto (PENDIENTE)
+## D-017 — El dataset sintetico no alcanzaba riesgo alto (RESUELTO en 4.6, ver D-026)
 
 **Observacion.** Ejecutando `rule-based-v0.1` sobre las 400 celdas de Plot A con
 la seed 42, el `risk_score` maximo es 0.5997: **cero celdas en `high`**, 264 en
@@ -247,12 +247,12 @@ contra su propio generador. La decision es del producto, no del motor.
 3. Dejarlo. La vista de riesgo del frontend solo mostrara dos de los tres
    colores, y el caso rojo no se ejercitara en la demo.
 
-**Recomendacion.** Opcion 1, cuando llegue la fase 5 y se vea el mapa. Hasta
-entonces no hay informacion suficiente para elegir bien.
+**Resuelto en la fase 4.6** con la opcion 1: se endurecio el generador con una
+zona critica localizada, sin tocar el modelo. Detalle en D-026.
 
 ---
 
-## D-018 — La aritmetica del error esta duplicada (Python y SQL)
+## D-018 — La aritmetica del error esta duplicada (Python y SQL) — reforzado en 4.6
 
 **Situacion.** `app/domain/performance.py` calcula `absolute_error_kg` y
 `percentage_error` para la API. La vista SQL `cell_performance` (migracion 0003)
@@ -268,9 +268,11 @@ consultas manuales daran numeros distintos sobre los mismos datos. Contencion:
 ambas llevan un comentario que apunta a la otra, los dos redondean a 4 decimales,
 y `tests/unit/test_performance.py` fija los valores de referencia.
 
-**Cuando resolverlo.** En cuanto haya un PostgreSQL disponible: se anade un test
-de integracion que ejecute la vista y compare fila a fila con el helper de
-Python. Hasta entonces la divergencia es posible y nadie la detectaria.
+**Resuelto en la fase 4.6.** `tests/postgres/test_performance_parity.py` ejecuta
+20 casos —normales, limites y empates de redondeo— por los dos caminos y compara.
+La lista de casos vive en `tests/performance_cases.py` y la consumen los dos
+lados, asi que anadir un caso lo anade a ambos. El primer pase encontro dos
+divergencias reales (ver D-025).
 
 ---
 
@@ -398,6 +400,107 @@ interpolacion.
 
 **Leccion.** El codigo que solo se ejecuta contra un motor distinto al de
 produccion no esta probado. Ninguno de los dos bugs podia aparecer en SQLite.
+
+---
+
+## D-025 — La aritmetica del error se hace en decimal, no en coma flotante
+
+**Que paso.** El test diferencial de D-018, en su primera ejecucion, encontro dos
+casos donde Python y la vista SQL daban numeros distintos:
+
+    2.00005 - 1.0  ->  Python 1.0000   SQL 1.0001
+    3.00025 - 2.0  ->  Python 1.0002   SQL 1.0003
+
+**La causa no era el redondeo.** Era la resta. Los dos lados parten del mismo
+float8, pero lo convierten a decimal de forma distinta: PostgreSQL usa 15 cifras
+significativas (`extra_float_digits = 0`) y Python la representacion mas corta
+que reproduce el float, 17 cifras. `1.0002499999999999` se le convierte a
+PostgreSQL en `1.00025` —un empate exacto que redondea hacia arriba— mientras
+Python ve un 4 en la quinta posicion.
+
+**Decision.** No imitar la peculiaridad de ninguno de los dos: **no restar en
+binario**. Cada operando se convierte a decimal por separado —donde ambos
+coinciden, porque los valores almacenados tienen 4 decimales— y la resta y la
+division ocurren en aritmetica decimal exacta. Python con `decimal.Decimal`,
+SQL casteando cada columna a `numeric` antes de operar (migracion 0005).
+
+El redondeo es HALF-UP en ambos: es lo que hace `round(numeric, n)` y lo que
+espera cualquiera que lea un porcentaje. `round()` de Python usa redondeo
+bancario y daria `2.0` donde SQL da `2.0001`.
+
+**Fuente de verdad.** `app/domain/performance.py`. La vista es su espejo para
+consultas ad-hoc y BI; si discrepan, el que esta mal es el SQL.
+
+**Limite conocido.** Un valor insertado a mano con mas de 15 cifras
+significativas se renderizaria distinto en cada lado. No ocurre en CERES —el
+motor redondea a 4 decimales y las cosechas entran por un schema Pydantic— pero
+queda anotado en el modulo.
+
+---
+
+## D-026 — La zona critica es un escenario sintetico, no un hallazgo
+
+**Decision.** El dataset incluye un foco localizado de deterioro extremo que
+produce celdas de `risk_level = high`.
+
+**Por que hizo falta.** Sin el, el dataset daba 136 `low`, 264 `medium` y cero
+`high`: la vista de riesgo del frontend solo habria podido mostrar dos de los
+tres colores, y el caso rojo no se ejercitaria nunca.
+
+**Por que se toco el generador y no el modelo.** Bajar el umbral de `high` o
+subir el peso de la sanidad habria producido celdas rojas igual de rapido, y
+habria sido cambiar el modelo para que los datos quedaran bonitos. El modelo
+—pesos, umbrales, formulas— esta exactamente igual que en la fase 3.
+
+**Como esta hecho.** Una campana gaussiana en (nx=0.12, ny=0.72), sigma 0.10, que
+hunde la sanidad 0.75, el suelo 0.35 y el terreno 60 cm. Tres propiedades que
+importan:
+
+- es una campana, no un recorte: la transicion `high -> medium -> low` es
+  continua y hay un test que comprueba que el anillo del foco es `medium`;
+- esta dentro del area de estres del oeste, asi que la peor zona se agrava en vez
+  de aparecer un parche donde no tocaba;
+- deforma tambien el relieve, porque en la fase 7 el terreno 3D se construye con
+  la elevacion y una zona critica plana se veria como pintura.
+
+**Como se sabe que no se toco el modelo.** Un test pone las tres penalizaciones a
+cero y comprueba que sin la zona no queda ninguna celda `high`, con el mismo
+motor y los mismos umbrales.
+
+**Lo que NO es.** No es agronomia, no es un fenomeno observado y no es evidencia
+de nada. Es un caso de prueba dibujado a mano, y esta etiquetado como tal en el
+codigo y en la documentacion.
+
+**Resultado:** 134 `low`, 232 `medium`, 34 `high`, en un unico foco contiguo.
+
+---
+
+## D-027 — El seed borra sus propias filas huerfanas antes de insertar
+
+**Que paso.** Al aplicar el dataset con la zona critica sobre el Supabase que ya
+tenia el anterior, la base acabo con **48 observaciones en lugar de 24**.
+
+**Por que.** El id de una observacion es `uuid5(cell_code, orden)` y que celdas se
+observan depende de cuales son las mas debiles. La zona critica cambio esa
+seleccion, asi que los ids nuevos no colisionaron con los viejos: el
+`ON CONFLICT DO UPDATE` inserto 24 y dejo vivas las 24 anteriores.
+
+**La leccion.** `ON CONFLICT DO UPDATE` da idempotencia sobre las filas que
+siguen existiendo, no sobre el conjunto de filas. Cuando el generador decide
+cuantas filas hay y cuales, hace falta borrar explicitamente.
+
+**Solucion.** El seed generado empieza con una limpieza acotada:
+
+    DELETE FROM observations WHERE created_by IN (<usuarios del seed>);
+    DELETE FROM grid_cells WHERE plot_id IN (<lotes>) AND (x >= W OR y >= H);
+
+La primera borra solo lo que el seed creo —las observaciones que llegan por la
+API no llevan autor y sobreviven, y hay un test que lo comprueba—. La segunda
+cubre el caso de regenerar con una malla mas pequena, sin necesidad de listar
+800 ids: las celdas sobrantes son exactamente las que caen fuera del rectangulo.
+
+**No se toca** `predictions` ni `harvests`: son datos del sistema en ejecucion,
+no del seed.
 
 ---
 

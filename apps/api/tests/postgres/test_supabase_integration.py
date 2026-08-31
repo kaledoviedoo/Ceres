@@ -33,16 +33,22 @@ def test_connects_to_a_real_postgres(pg_session):
 
 
 def test_all_migrations_are_applied(pg_session):
+    """La base tiene exactamente las migraciones que hay en el repositorio.
+
+    Se comparan contra los archivos del disco y no contra una lista escrita a
+    mano: asi el test tambien detecta una migracion anadida al repo pero nunca
+    aplicada, que es el fallo que de verdad duele.
+    """
+    from pathlib import Path
+
+    migrations_dir = Path(__file__).resolve().parents[4] / "database" / "migrations"
+    on_disk = {path.stem for path in migrations_dir.glob("*.sql")}
     applied = set(
         pg_session.execute(text("SELECT version FROM schema_migrations")).scalars()
     )
 
-    assert applied == {
-        "0001_init",
-        "0002_prediction_immutability",
-        "0003_cell_performance_view",
-        "0004_security_hardening",
-    }
+    assert on_disk, "no se encontraron migraciones en el repositorio"
+    assert applied == on_disk
 
 
 def test_schema_has_the_expected_objects(pg_session):
@@ -549,3 +555,127 @@ def test_full_cycle_supabase_to_performance(pg_client, pg_session, seeded_cell, 
         {"id": seeded_cell},
     ).scalar()
     assert rows == 1
+
+
+# --- Idempotencia del seed (fase 4.6) -----------------------------------------
+
+
+def test_reapplying_the_seed_does_not_duplicate_rows(pg_session):
+    """Reaplicar el seed converge al mismo estado, no lo acumula.
+
+    Regresion real de la fase 4.6: los ids de las observaciones salen de
+    (cell_code, orden) y la zona critica cambio que celdas son las mas debiles.
+    `ON CONFLICT DO UPDATE` inserto 24 nuevas y dejo vivas las 24 anteriores,
+    dejando 48 en la base. El seed ahora borra sus propias filas huerfanas antes
+    de insertar.
+    """
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "scripts"))
+    from generate_demo_data import render_seed
+
+    from app.core.synthetic.demo import build_demo_dataset
+
+    sql = render_seed(build_demo_dataset())
+
+    def counts():
+        return pg_session.execute(
+            text("""
+            SELECT (SELECT count(*) FROM grid_cells)   AS cells,
+                   (SELECT count(*) FROM observations) AS observations,
+                   (SELECT count(*) FROM plots)        AS plots
+            """)
+        ).one()
+
+    before = counts()
+
+    pg_session.rollback()
+    pg_session.connection().exec_driver_sql(sql)
+    pg_session.commit()
+
+    after = counts()
+
+    assert after.cells == before.cells == 800
+    assert after.observations == before.observations == 24
+    assert after.plots == before.plots == 2
+
+
+def test_seed_cleanup_leaves_api_observations_alone(pg_session, seeded_cell):
+    """La limpieza del seed solo borra lo suyo, no lo que crearon los usuarios."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "scripts"))
+    from generate_demo_data import render_seed
+
+    from app.core.synthetic.demo import build_demo_dataset
+
+    pg_session.execute(
+        text("""
+        INSERT INTO observations (cell_id, type, severity, description)
+        VALUES (:cell, 'pest', 0.5, 'creada por un usuario, sin autor asignado')
+        """),
+        {"cell": seeded_cell},
+    )
+    pg_session.commit()
+
+    pg_session.rollback()
+    pg_session.connection().exec_driver_sql(render_seed(build_demo_dataset()))
+    pg_session.commit()
+
+    survivors = pg_session.execute(
+        text("SELECT count(*) FROM observations WHERE created_by IS NULL")
+    ).scalar()
+    seeded = pg_session.execute(
+        text("SELECT count(*) FROM observations WHERE created_by IS NOT NULL")
+    ).scalar()
+
+    assert survivors == 1
+    assert seeded == 24
+
+
+# --- Los tres niveles de riesgo llegan a PostgreSQL ---------------------------
+
+
+def test_all_three_risk_levels_are_reachable_from_the_stored_terrain(
+    pg_client, pg_session, seeded_cycle
+):
+    """La zona critica sintetica tiene que producir HIGH sobre datos reales.
+
+    Se predice el lote entero via API contra Supabase y se comprueba que salen
+    los tres niveles. Es lo que la vista de riesgo del frontend necesita.
+    """
+    cells = list(
+        pg_session.execute(
+            text("""
+            SELECT gc.id FROM grid_cells gc
+            JOIN plots p ON p.id = gc.plot_id
+            WHERE p.code = 'A'
+            """)
+        ).scalars()
+    )
+    assert len(cells) == 400
+
+    levels = set(
+        pg_session.execute(
+            text("""
+            SELECT DISTINCT
+              CASE
+                WHEN risk >= 0.66 THEN 'high'
+                WHEN risk >= 0.33 THEN 'medium'
+                ELSE 'low'
+              END AS level
+            FROM (
+              SELECT 0.45 * (1 - gc.health_factor)
+                   + 0.30 * (1 - gc.soil_quality)
+                   + 0.25 * least(gc.slope_deg / 15.0, 1.0) AS risk
+              FROM grid_cells gc
+              JOIN plots p ON p.id = gc.plot_id
+              WHERE p.code = 'A'
+            ) scores
+            """)
+        ).scalars()
+    )
+
+    assert levels == {"low", "medium", "high"}

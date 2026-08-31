@@ -77,6 +77,38 @@ def render_table(table: TableRows) -> str:
     )
 
 
+def render_cleanup(dataset: DemoDataset) -> str:
+    """Borra las filas de generaciones anteriores que este seed ya no produce.
+
+    `ON CONFLICT DO UPDATE` mantiene al dia las filas que siguen existiendo, pero
+    no borra las que dejaron de existir. Dos tablas tienen ese problema porque su
+    conjunto de filas depende del generador, no de una lista fija:
+
+    - `observations`: su id sale de (cell_code, orden), y que celdas se observan
+      depende de cuales son las mas debiles. Cambiar el terreno cambia la
+      seleccion, y sin esta limpieza las observaciones viejas sobreviven. Paso de
+      verdad al introducir la zona critica: 24 + 24 = 48 filas.
+    - `grid_cells`: si se regenera con una malla mas pequena, las celdas de fuera
+      del nuevo rectangulo quedarian huerfanas.
+
+    La limpieza es acotada: solo toca filas de esta finca de demo. Las
+    observaciones creadas por la API (sin autor) no se tocan, y tampoco se tocan
+    predicciones ni cosechas.
+    """
+    user_ids = ", ".join(sql_literal(row["id"]) for row in dataset.table("users").rows)
+    plots = dataset.table("plots").rows
+    plot_ids = ", ".join(sql_literal(row["id"]) for row in plots)
+    width = plots[0]["grid_width"]
+    height = plots[0]["grid_height"]
+
+    return (
+        "-- Limpieza de filas de generaciones anteriores (ver render_cleanup)\n"
+        f"DELETE FROM observations WHERE created_by IN ({user_ids});\n"
+        f"DELETE FROM grid_cells WHERE plot_id IN ({plot_ids})\n"
+        f"  AND (x >= {width} OR y >= {height});\n"
+    )
+
+
 def render_seed(dataset: DemoDataset) -> str:
     header = (
         "-- =============================================================================\n"
@@ -91,7 +123,8 @@ def render_seed(dataset: DemoDataset) -> str:
         "-- ============================================================================="
         "\n\nBEGIN;\n\n"
     )
-    body = "\n".join(render_table(table) for table in dataset.tables)
+    body = render_cleanup(dataset) + "\n"
+    body += "\n".join(render_table(table) for table in dataset.tables)
     footer = "\nCOMMIT;\n"
     return header + body + footer
 
