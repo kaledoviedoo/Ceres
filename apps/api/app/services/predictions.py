@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.prediction import PredictionResult, predict
 from app.models import CropCycle, GridCell, Plot, Prediction
 from app.services.errors import ConflictError, NotFoundError
-from app.services.farms import get_cell
+from app.services.farms import get_cell, get_plot
 
 
 def _get_crop_cycle(session: Session, crop_cycle_id: uuid.UUID) -> CropCycle:
@@ -111,3 +111,44 @@ def list_predictions_for_cell(
     return list(
         session.scalars(statement.order_by(Prediction.created_at.desc(), Prediction.id))
     )
+
+
+def build_plot_overview(
+    session: Session,
+    plot_id: uuid.UUID,
+    crop_cycle_id: uuid.UUID,
+) -> tuple[Plot, CropCycle, list[tuple[GridCell, PredictionResult]]]:
+    """Ejecuta el motor sobre todas las celdas del lote SIN persistir nada.
+
+    Es lo que colorea la malla. Deliberadamente no escribe en `predictions`:
+    guardar 400 filas cada vez que alguien abre el dashboard llenaria de ruido
+    el historico y destruiria justo lo que lo hace valioso —poder responder "que
+    predijo CERES aquel dia"—.
+
+    Persistir sigue siendo exclusivo de `create_prediction`, al hacer click en
+    una celda concreta.
+
+    Reutiliza `run_engine`, que se separo de `create_prediction` en la fase 4
+    precisamente para poder calcular sin escribir.
+    """
+    plot = get_plot(session, plot_id)
+    cycle = _get_crop_cycle(session, crop_cycle_id)
+
+    if cycle.plot_id != plot.id:
+        raise ConflictError(
+            f"El ciclo {cycle.slug} se siembra en el lote {cycle.plot_id}, no en {plot.id}"
+        )
+
+    cells = list(
+        session.scalars(
+            select(GridCell)
+            .where(GridCell.plot_id == plot_id)
+            .order_by(GridCell.y, GridCell.x)
+        )
+    )
+
+    # El area sale del lote una sola vez, no una consulta por celda.
+    area_m2 = plot.cell_size_m**2
+    results = [(cell, predict(cell, cycle.crop, area_m2=area_m2)) for cell in cells]
+
+    return plot, cycle, results

@@ -504,6 +504,89 @@ no del seed.
 
 ---
 
+## D-028 — `GET /plots/{id}/overview`: calcular sin persistir
+
+**Problema.** Para colorear 400 celdas por riesgo hacian falta 400 valores de
+riesgo, y `CellSummary` solo trae estado del terreno. Las opciones eran 400
+peticiones POST, calcular el riesgo en TypeScript, o un endpoint nuevo.
+
+**Decision.** Un endpoint que ejecuta el motor sobre todo el lote y **no guarda
+nada**. Reutiliza `run_engine()`, que ya estaba separado de `create_prediction()`
+desde la fase 4.
+
+**Por que no persistir.** Guardar 400 filas cada vez que alguien abre el
+dashboard llenaria de ruido la tabla `predictions` y destruiria justo lo que la
+hace valiosa: poder responder "que predijo CERES aquel dia". Guardar sigue
+siendo un acto deliberado sobre una celda concreta.
+
+**Como se evita la confusion.** La respuesta lleva `persisted: false` y las
+celdas no tienen `id` ni `created_at`, porque no existen en ninguna tabla. El
+panel lateral separa en pantalla "Estado del terreno" (guardado) de "Estimacion
+actual (sin guardar)".
+
+**Coste.** El motor se ejecuta 400 veces por carga de pagina. Con el modelo
+determinista actual es instantaneo; el dia que el motor sea un modelo pesado
+habra que cachear o paginar.
+
+---
+
+## D-029 — Los datos no viven en el store de Zustand
+
+**Decision.** `useCeresStore` guarda seis identificadores y nada mas: finca,
+lote, ciclo, celda seleccionada, celda bajo el cursor y modo de vista. Las
+respuestas de la API las pide `app/page.tsx` y bajan por props.
+
+**Por que.** El brief pedia "Zustand solo para estado de interfaz". La razon de
+fondo: un store con las 400 celdas dentro es una cache, y una cache que nadie
+invalida acaba mostrando datos del lote anterior. Manteniendo los datos en la
+pagina, cambiar de lote los descarta solo.
+
+**Lo que habilita.** Es la condicion para que la fase 7 sea una sustitucion de
+componente y no una reescritura: la escena 3D leera y escribira el mismo
+`selectedCellId` que lee y escribe el grid actual. Un test lo fija comprobando
+que el store no tiene mas claves que esas seis.
+
+**Cuando dejara de bastar.** Cuando haya varias pantallas compartiendo datos o
+haga falta refetch en segundo plano. Ahi entraria TanStack Query. Para cuatro
+peticiones, anadirlo ahora seria mas peso que ayuda.
+
+---
+
+## D-030 — Next 16 en lugar de Next 15
+
+**Decision.** `next@16.3.3`, no la rama 15.
+
+**Por que.** Al instalar `next@15.1.6`, npm reporto CVE-2025-66478. Subir a
+15.5.24 no bastaba: `npm audit` seguia marcando cuatro avisos de `postcss`
+—incluido uno de severidad alta por lectura arbitraria de archivos via
+`sourceMappingURL`— y el unico arreglo disponible era Next 16.
+
+Como el frontend no existia todavia, no habia ninguna migracion que pagar: usar
+la version limpia salia mas barato que quedarse en una con vulnerabilidades
+conocidas. `postcss` y `vitest` se subieron tambien a sus versiones parcheadas.
+
+**Resultado.** `npm audit`: 0 vulnerabilidades.
+
+**Nota de instalacion.** Tailwind 4 fallaba con
+`Missing field 'negated' on ScannerOptions.sources`: el arbol de dependencias
+mezclaba versiones del escaner nativo `@tailwindcss/oxide`. Se resolvio con una
+reinstalacion limpia (`rm -rf node_modules package-lock.json`) tras alinear
+`tailwindcss` y `@tailwindcss/postcss` en la misma version.
+
+---
+
+## D-031 — La API de CERES escucha en el 8010, no en el 8000
+
+**Motivo.** El puerto 8000 de esta maquina ya lo ocupa otro proyecto del usuario
+(un servicio "Jarvis"). `uvicorn` fallaba al enlazar con WinError 10013 y el
+frontend acababa hablando con la aplicacion equivocada.
+
+**Consecuencia a recordar.** `NEXT_PUBLIC_API_BASE_URL` se hornea en el build de
+Next: cambiar el puerto obliga a reconstruir, no basta con reiniciar el
+servidor. Perder diez minutos con eso es facil.
+
+---
+
 ## Relacionado
 
 - [architecture.md](architecture.md)

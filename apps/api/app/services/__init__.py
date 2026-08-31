@@ -13,12 +13,17 @@ from app.services.farms import (
     get_farm,
     get_plot,
     list_cells_for_plot,
+    list_crop_cycles_for_plot,
     list_farms,
 )
 from app.services.harvests import create_harvest, list_harvests_for_cell
 from app.services.observations import create_observation, list_observations_for_cell
 from app.services.performance import get_cell_performance
-from app.services.predictions import create_prediction, list_predictions_for_cell
+from app.services.predictions import (
+    build_plot_overview,
+    create_prediction,
+    list_predictions_for_cell,
+)
 
 __all__ = [
     "NotFoundError",
@@ -27,8 +32,10 @@ __all__ = [
     "get_farm",
     "get_plot",
     "list_cells_for_plot",
+    "list_crop_cycles_for_plot",
     "get_cell",
     "create_prediction",
+    "build_plot_overview",
     "list_predictions_for_cell",
     "create_observation",
     "list_observations_for_cell",

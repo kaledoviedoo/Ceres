@@ -77,9 +77,42 @@ ceres/
 └── docs/
 ```
 
-`apps/web/` (Next.js) aparece en la fase 5. Todavia no existe: construirlo antes
-de que el ciclo `cell -> prediction -> API -> response` funcione seria empezar
-por el tejado.
+```
+ceres/apps/web/
+├── app/page.tsx        el UNICO sitio que pide datos a la API
+├── components/
+│   ├── dashboard/      shell, selector, barra de estado
+│   ├── terrain/        CellGrid — se sustituye por R3F en la fase 7
+│   ├── cell-inspector/ panel lateral
+│   └── ui/             primitivas
+├── lib/
+│   ├── api/            cliente HTTP, endpoints, errores
+│   ├── types/          espejo de los schemas Pydantic
+│   └── presentation/   valores -> colores, formato
+├── stores/             Zustand: SOLO estado de interfaz
+└── tests/
+```
+
+### Como esta preparado el frontend para el 3D
+
+`CellGrid` recibe celdas ya calculadas y emite `cell_id` en hover y click. No
+pide datos, no calcula nada y no sabe que es una prediccion. Un `TerrainCanvas`
+de React Three Fiber podra ocupar su lugar implementando esa misma interfaz sin
+que el panel lateral, el store ni el cliente de API se enteren.
+
+La correspondencia se mantiene por `cell_id`, no por posicion: en 3D el
+raycasting devolvera ese mismo identificador.
+
+Tres reglas sostienen esa sustituibilidad:
+
+1. **Los datos no viven en el store.** `page.tsx` los pide y bajan por props. Un
+   store con las 400 celdas dentro seria una cache que nadie invalida.
+2. **El store solo guarda identificadores**: que finca, que lote, que ciclo, que
+   celda, que modo de vista. La escena 3D leera y escribira exactamente los
+   mismos.
+3. **Ninguna formula agricola en TypeScript.** `lib/presentation/risk.ts` mapea
+   `risk_level` a un color; eso es todo. El backend manda `"high"` y el frontend
+   decide que se pinta rojo.
 
 ## Las cuatro representaciones de una celda
 
@@ -121,6 +154,9 @@ un notebook y sustituirlo por un modelo estadistico sin tocar nada mas.
 9. **El servidor es la fuente de verdad agricola.** El cliente solo manda
    identificadores. `PredictionCreate` declara `extra="forbid"`, asi que enviar
    `soil_quality` o `projected_yield_kg` se rechaza con 422.
+10. **Colorear el mapa no escribe en el historico.** `GET /plots/{id}/overview`
+    ejecuta el motor sobre las 400 celdas y tira el resultado; guardar una
+    prediccion es un acto deliberado del usuario sobre una celda concreta.
 
 ## Que deja preparado esta arquitectura (sin implementarlo)
 

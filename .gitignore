@@ -28,3 +28,8 @@ desktop.ini
 
 # Ajustes locales de Claude Code (por maquina)
 .claude/settings.local.json
+
+# Next.js
+apps/web/.next/
+apps/web/next-env.d.ts
+apps/web/.env.local

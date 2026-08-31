@@ -35,16 +35,26 @@ ESTADO  ->  PREDICCION  ->  OBSERVACION  ->  COSECHA  ->  VALIDACION
 | 4 | Endpoints FastAPI | ✅ |
 | 4.5 | Integracion y verificacion contra Supabase real | ✅ |
 | 4.6 | Paridad Python/SQL, zona critica sintetica, idempotencia del seed | ✅ |
-| 5 | Frontend 2D (grid 20x20) | ⬜ siguiente |
-| 6 | Integracion Next.js ↔ FastAPI | ⬜ |
-| 7 | React Three Fiber | ⬜ |
+| 5 | Frontend 2D (grid 20x20) | ✅ |
+| 6 | Integracion Next.js ↔ FastAPI | ✅ (hecha en la fase 5) |
+| 7 | React Three Fiber | ⬜ siguiente |
 | 8 | Observaciones | ⬜ |
 | 9 | Cosechas y error de prediccion | ⬜ |
 | 10 | Historico prediccion vs realidad | ⬜ |
 
-Lo que hay ahora: el ciclo `celda -> motor -> API -> JSON` cerrado y testeado
-de extremo a extremo, sobre datos sinteticos reproducibles. Todavia no hay
-frontend.
+Lo que hay ahora: el ciclo completo funcionando de extremo a extremo, desde el
+navegador hasta PostgreSQL.
+
+```
+Next.js  ->  FastAPI  ->  Prediction Engine  ->  Supabase
+   |                                                |
+   +-- click en una celda -> cell_id ---------------+
+   |                                                |
+   +-- Cell Inspector <- prediccion guardada -------+
+```
+
+**392 tests**: 349 en el backend (236 unit + 73 SQLite + 40 PostgreSQL real) y
+43 en el frontend.
 
 **Verificado contra Supabase real** (PostgreSQL 17, proyecto `ceres-mvp`):
 migraciones, seed de 800 celdas, constraints, trigger de inmutabilidad, vista
@@ -109,10 +119,24 @@ mano para ejercitar la visualizacion, no evidencia agronomica; ver
 
 ```bash
 cd apps/api
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8010
 ```
 
-Swagger en http://localhost:8000/docs
+Swagger en http://localhost:8010/docs
+
+### 5b. Levantar el frontend
+
+```bash
+cd apps/web
+cp .env.local.example .env.local   # apunta a la API
+npm install
+npm run dev
+```
+
+CERES en http://localhost:3000
+
+`NEXT_PUBLIC_API_BASE_URL` se hornea en el build: si cambias el puerto de la
+API, hay que reconstruir, no basta con reiniciar.
 
 ### 6. Tests
 
@@ -136,8 +160,11 @@ pytest tests/integration  # SQLite en memoria, no PostgreSQL
 | `py scripts/generate_demo_data.py --seed 7` | Otra finca, igual de reproducible |
 | `psql "$DATABASE_URL" -f scripts/reset_demo_data.sql` | Vacia todas las tablas |
 | `py scripts/preview_predictions.py` | Predice las 400 celdas y muestra 3 ejemplos |
-| `cd apps/api && uvicorn app.main:app --reload` | Levanta la API en :8000 |
-| `cd apps/api && pytest` | Tests |
+| `cd apps/api && uvicorn app.main:app --reload --port 8010` | Levanta la API |
+| `cd apps/api && pytest` | Tests del backend (349) |
+| `cd apps/web && npm run dev` | Levanta el frontend en :3000 |
+| `cd apps/web && npm test` | Tests del frontend (43) |
+| `cd apps/web && npm run typecheck` | Comprueba los tipos |
 
 ---
 
@@ -168,7 +195,21 @@ ceres/
 └── docs/
 ```
 
-`apps/web/` (Next.js) llega en la fase 5.
+```
+ceres/apps/web/
+├── app/                page.tsx (unico sitio que pide datos) + layout + estilos
+├── components/
+│   ├── dashboard/      shell, selector finca->lote->ciclo, barra de estado
+│   ├── terrain/        CellGrid (se sustituye por R3F en la fase 7)
+│   ├── cell-inspector/ panel lateral y boton de prediccion
+│   └── ui/             panel, spinner, error, vacio, badges
+├── lib/
+│   ├── api/            cliente HTTP, endpoints, errores
+│   ├── types/          tipos derivados de los schemas de FastAPI
+│   └── presentation/   valores -> colores y formato
+├── stores/             Zustand: solo estado de interfaz
+└── tests/              43 tests (vitest + testing-library)
+```
 
 ---
 
@@ -176,7 +217,7 @@ ceres/
 
 **El frontend no calcula agricultura.**
 
-React Three Fiber hace hover, click, seleccion, colores y camara. Toda formula
+El frontend hace hover, click, seleccion, colores y camara. Toda formula
 —rendimiento, perdida, riesgo— vive en Python, en
 `apps/api/app/core/prediction/`. El backend devuelve valores; el frontend decide
 como pintarlos.

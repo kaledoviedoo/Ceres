@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/*
+ * CERES - "industrial agricultural intelligence".
+ *
+ * Fondo oscuro, verde como color de marca, superficies planas con bordes finos.
+ * La estetica no se come la usabilidad: el contraste de los textos cumple
+ * AA sobre el fondo, y los tres colores de riesgo son los mismos que usa
+ * lib/presentation/risk.ts (definidos alli, no aqui, para que exista una sola
+ * fuente).
+ */
+
+@theme {
+  --color-ceres-bg: #0a0f0d;
+  --color-ceres-surface: #111815;
+  --color-ceres-elevated: #17211d;
+  --color-ceres-border: #22302a;
+  --color-ceres-border-strong: #2f4238;
+
+  --color-ceres-text: #e6f0ea;
+  --color-ceres-muted: #8ba397;
+  --color-ceres-dim: #5f7469;
+
+  --color-ceres-accent: #22c55e;
+  --color-ceres-accent-dim: #16a34a;
+
+  --color-risk-low: #22c55e;
+  --color-risk-medium: #eab308;
+  --color-risk-high: #ef4444;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+
+html,
+body {
+  background-color: var(--color-ceres-bg);
+  color: var(--color-ceres-text);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Los valores numericos van en monoespaciada y con cifras tabulares: en un
+   panel de metricas, que los digitos no bailen al cambiar de celda importa. */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Foco visible siempre: la malla se recorre con teclado. */
+:focus-visible {
+  outline: 2px solid var(--color-ceres-accent);
+  outline-offset: 2px;
+}

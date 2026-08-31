@@ -10,6 +10,7 @@ from app.schemas.farm import FarmDetail, FarmRead
 from app.schemas.harvest import HarvestCreate, HarvestRead
 from app.schemas.observation import ObservationCreate, ObservationRead
 from app.schemas.organization import OrganizationRead, UserRead
+from app.schemas.overview import CellOverview, PlotOverview
 from app.schemas.performance import CellPerformance, PerformanceEntry
 from app.schemas.plot import PlotRead
 from app.schemas.prediction import (
@@ -34,6 +35,8 @@ __all__ = [
     "CellSummary",
     "CellRead",
     "CellCollection",
+    "CellOverview",
+    "PlotOverview",
     "PredictionCreate",
     "PredictionRead",
     "PredictionList",
