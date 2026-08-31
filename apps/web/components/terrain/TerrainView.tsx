@@ -3,49 +3,62 @@
 /**
  * Contenedor de la representación del terreno.
  *
- * Existe para aislar el hover. `hoveredCellId` cambia con cada celda que el
- * cursor toca; si lo leyera la página, cada movimiento del ratón repintaría
- * también el selector, el panel del lote y el Cell Inspector. Suscribiéndose
- * aquí, el repintado se queda dentro de este subárbol.
+ * ES EL PUNTO DE SUSTITUCIÓN. Decide qué vista se monta —relieve 3D o malla
+ * plana— y traduce store ↔ props. Cambiar de una a otra es cambiar una rama de
+ * este archivo: `page.tsx`, el Cell Inspector, el cliente de API y el motor no
+ * se enteran, porque ambas vistas cumplen el mismo contrato estrecho.
  *
- * En 2D el coste era despreciable (0,01 ms por hover gracias al memo de
- * `CellSquare`). Importa de cara a React Three Fiber: allí un re-render del
- * árbol en cada movimiento compite con el bucle de render de la escena.
+ * También aísla el repintado. Se suscribe a la selección y al modo con
+ * selectores individuales, así que cambiar de celda no toca el selector de
+ * lote ni el panel del lado.
  *
- * ESTE ES EL PUNTO DE SUSTITUCIÓN DE LA FASE 7. Cambiar `CellGrid` por un
- * `TerrainCanvas` es cambiar una línea de este archivo: el contenedor seguirá
- * traduciendo store <-> props, y `page.tsx` no se entera.
+ * El hover no aparece por ninguna parte: cada vista lo resuelve por dentro.
  */
 
 import { CellGrid } from "@/components/terrain/CellGrid";
-import type { CellOverview } from "@/lib/types/api";
+import { TerrainCanvas } from "@/components/terrain/TerrainCanvas";
+import type { TerrainCell } from "@/lib/terrain/types";
 import { useCeresStore } from "@/stores/useCeresStore";
 
 interface TerrainViewProps {
-  cells: CellOverview[];
+  cells: TerrainCell[];
   gridWidth: number;
   gridHeight: number;
 }
 
 export function TerrainView({ cells, gridWidth, gridHeight }: TerrainViewProps) {
-  // Selectores individuales: este componente solo se repinta cuando cambia una
-  // de estas cuatro cosas, no cuando cambia cualquier parte del store.
   const viewMode = useCeresStore((state) => state.viewMode);
+  const terrainMode = useCeresStore((state) => state.terrainMode);
   const selectedCellId = useCeresStore((state) => state.selectedCellId);
-  const hoveredCellId = useCeresStore((state) => state.hoveredCellId);
   const selectCell = useCeresStore((state) => state.selectCell);
-  const hoverCell = useCeresStore((state) => state.hoverCell);
+
+  if (terrainMode === "2d") {
+    return (
+      <div className="flex h-full w-full items-center justify-center overflow-auto p-8">
+        {/* Ancho explícito: dentro de un flex centrado, el `w-full` de la malla
+            no tendría de qué agarrarse y se colapsaría a su contenido. */}
+        <div className="w-full max-w-[680px] shrink-0">
+        <CellGrid
+          cells={cells}
+          gridWidth={gridWidth}
+          gridHeight={gridHeight}
+          viewMode={viewMode}
+          selectedCellId={selectedCellId}
+          onSelect={selectCell}
+        />
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <CellGrid
+    <TerrainCanvas
       cells={cells}
       gridWidth={gridWidth}
       gridHeight={gridHeight}
       viewMode={viewMode}
       selectedCellId={selectedCellId}
-      hoveredCellId={hoveredCellId}
       onSelect={selectCell}
-      onHover={hoverCell}
     />
   );
 }

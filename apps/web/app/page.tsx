@@ -1,54 +1,54 @@
 "use client";
 
 /**
- * Dashboard de CERES.
+ * CERES — inspección espacial de una finca.
  *
  * Esta página es la única que pide datos. Los componentes reciben lo que
  * necesitan por props y no saben que existe una API; el store solo guarda qué
- * está seleccionado. Esa separación es lo que permitirá sustituir `CellGrid`
- * por un `TerrainCanvas` de React Three Fiber en la fase 7 sin tocar nada de
- * lo demás.
+ * está seleccionado.
+ *
+ * El terreno ocupa la ventana entera y el resto flota encima. No es una
+ * decisión estética: el objeto de análisis de CERES es la parcela, y meterla en
+ * una tarjeta dentro de una rejilla de paneles la convierte en un widget más.
  *
  * Flujo:
  *
- *   farms → farm(plots) → cropCycles → overview(400 celdas) → click → cell
- *                                                                │
- *                                                                └→ POST /predictions
+ *   farms → farm(plots) → cropCycles → cells + overview → click → cell
+ *                                                           │
+ *                                                           └→ POST /predictions
  */
 
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { CellInspector } from "@/components/cell-inspector/CellInspector";
-import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { PlotSelector } from "@/components/dashboard/PlotSelector";
-import { StatusBar } from "@/components/dashboard/StatusBar";
-import { TerrainView } from "@/components/terrain/TerrainView";
+import { TopStrip } from "@/components/dashboard/TopStrip";
 import { RiskLegend } from "@/components/terrain/RiskLegend";
+import { TerrainModeSwitch } from "@/components/terrain/TerrainModeSwitch";
+import { TerrainView } from "@/components/terrain/TerrainView";
 import { ViewModeSwitch } from "@/components/terrain/ViewModeSwitch";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { ErrorState } from "@/components/ui/ErrorState";
-import { Panel } from "@/components/ui/Panel";
 import { Spinner } from "@/components/ui/Spinner";
 import { ceresApi } from "@/lib/api/endpoints";
 import { useApiResource } from "@/lib/api/useApiResource";
-import { formatInteger } from "@/lib/presentation/format";
+import { joinTerrainCells } from "@/lib/terrain/types";
 import { useCeresStore } from "@/stores/useCeresStore";
 
-export default function DashboardPage() {
-  // Selectores individuales, uno por dato. Con `useCeresStore()` a secas la
-  // pagina se suscribia al store completo y se repintaba entera con cada
-  // cambio, incluido el hover. `hoveredCellId` ya no se lee aqui: vive dentro
-  // de TerrainView para que mover el raton no toque el resto de la pantalla.
+export default function CeresPage() {
+  // Selectores individuales: la página no se suscribe al store completo.
   const selectedFarmId = useCeresStore((state) => state.selectedFarmId);
   const selectedPlotId = useCeresStore((state) => state.selectedPlotId);
   const selectedCropCycleId = useCeresStore((state) => state.selectedCropCycleId);
   const selectedCellId = useCeresStore((state) => state.selectedCellId);
   const viewMode = useCeresStore((state) => state.viewMode);
+  const terrainMode = useCeresStore((state) => state.terrainMode);
 
   const selectFarm = useCeresStore((state) => state.selectFarm);
   const selectPlot = useCeresStore((state) => state.selectPlot);
   const selectCropCycle = useCeresStore((state) => state.selectCropCycle);
+  const clearSelection = useCeresStore((state) => state.clearSelection);
   const setViewMode = useCeresStore((state) => state.setViewMode);
+  const setTerrainMode = useCeresStore((state) => state.setTerrainMode);
 
   const health = useApiResource((signal) => ceresApi.health(signal), []);
   const farms = useApiResource((signal) => ceresApi.listFarms(signal), []);
@@ -63,6 +63,14 @@ export default function DashboardPage() {
     [selectedPlotId],
   );
 
+  // Estado del terreno: da la geometría (altura de cada celda).
+  const terrain = useApiResource(
+    selectedPlotId ? (signal) => ceresApi.listCells(selectedPlotId, signal) : null,
+    [selectedPlotId],
+  );
+
+  // Métricas del motor: dan el color. Dos peticiones porque son dos cosas
+  // distintas — cómo ES la parcela y qué predice el motor sobre ella—.
   const overview = useApiResource(
     selectedPlotId && selectedCropCycleId
       ? (signal) => ceresApi.getPlotOverview(selectedPlotId, selectedCropCycleId, signal)
@@ -97,113 +105,112 @@ export default function DashboardPage() {
     }
   }, [cropCycles.data, selectedCropCycleId, selectCropCycle]);
 
-  // Métricas de la celda seleccionada, sacadas del overview ya cargado: pedir
-  // otra vez al servidor lo que ya está en memoria sería un viaje de más.
+  // Unión de estado y métricas por cell_id. Emparejar dos listas no es una
+  // fórmula: los valores llegan ya calculados del motor.
+  const terrainCells = useMemo(() => {
+    if (!terrain.data || !overview.data) return [];
+    return joinTerrainCells(terrain.data.cells, overview.data.cells);
+  }, [terrain.data, overview.data]);
+
   const selectedOverview = useMemo(
     () => overview.data?.cells.find((item) => item.cell_id === selectedCellId) ?? null,
     [overview.data, selectedCellId],
   );
 
   const plot = farm.data?.plots.find((item) => item.id === selectedPlotId) ?? null;
+  const isLoadingTerrain = terrain.isLoading || overview.isLoading;
+  const terrainError = terrain.error ?? overview.error;
+
+  const reloadTerrain = useCallback(() => {
+    terrain.reload();
+    overview.reload();
+  }, [terrain, overview]);
 
   return (
-    <DashboardShell
-      statusBar={<StatusBar health={health.data} error={health.error} />}
-      sidebar={
-        <>
-          <Panel title="Selección">
-            {farms.isLoading && <Spinner label="Cargando fincas" />}
-            {farms.error && <ErrorState message={farms.error} onRetry={farms.reload} />}
-            {farms.data && (
-              <PlotSelector
-                farms={farms.data}
-                farm={farm.data}
-                cropCycles={cropCycles.data ?? []}
-                selectedFarmId={selectedFarmId}
-                selectedPlotId={selectedPlotId}
-                selectedCropCycleId={selectedCropCycleId}
-                onSelectFarm={selectFarm}
-                onSelectPlot={selectPlot}
-                onSelectCropCycle={selectCropCycle}
-              />
-            )}
-          </Panel>
+    <div className="relative h-dvh w-full overflow-hidden bg-soil-900">
+      {/* El terreno ocupa la ventana; todo lo demás flota encima. */}
+      <div className="absolute inset-0">
+        {isLoadingTerrain && (
+          <div className="grid h-full place-items-center">
+            <Spinner label="Ejecutando el motor sobre el lote" />
+          </div>
+        )}
 
-          {plot && (
-            <Panel title="Lote">
-              <dl className="space-y-1.5 text-xs">
-                <div className="flex justify-between">
-                  <dt className="text-ceres-muted">Malla</dt>
-                  <dd className="tabular text-ceres-text">
-                    {plot.grid_width} × {plot.grid_height}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-ceres-muted">Celdas</dt>
-                  <dd className="tabular text-ceres-text">{formatInteger(plot.cell_count)}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-ceres-muted">Área</dt>
-                  <dd className="tabular text-ceres-text">{formatInteger(plot.area_m2)} m²</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-ceres-muted">Lado de celda</dt>
-                  <dd className="tabular text-ceres-text">{plot.cell_size_m} m</dd>
-                </div>
-              </dl>
-            </Panel>
-          )}
-        </>
-      }
-      canvas={
-        <Panel
-          title="Terreno"
-          subtitle={
-            overview.data
-              ? `${formatInteger(overview.data.cells.length)} celdas · estimación al vuelo, sin guardar`
-              : undefined
-          }
-          actions={<ViewModeSwitch value={viewMode} onChange={setViewMode} />}
-        >
-          {overview.isLoading && <Spinner label="Ejecutando el motor sobre el lote" />}
-          {overview.error && <ErrorState message={overview.error} onRetry={overview.reload} />}
-
-          {!overview.isLoading && !overview.error && !overview.data && (
-            <EmptyState
-              title="Selecciona un lote y un ciclo de cultivo"
-              hint="La malla se colorea con las métricas que devuelve la API."
-            />
-          )}
-
-          {overview.data && !overview.isLoading && (
-            <div className="space-y-4">
-              <TerrainView
-                cells={overview.data.cells}
-                gridWidth={overview.data.grid_width}
-                gridHeight={overview.data.grid_height}
-              />
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ceres-border pt-3">
-                <RiskLegend cells={overview.data.cells} viewMode={viewMode} />
-                <span className="tabular text-[11px] text-ceres-dim">
-                  {overview.data.model_version}
-                </span>
-              </div>
+        {terrainError && !isLoadingTerrain && (
+          <div className="grid h-full place-items-center px-6">
+            <div className="max-w-md">
+              <ErrorState message={terrainError} onRetry={reloadTerrain} />
             </div>
-          )}
-        </Panel>
-      }
-      inspector={
-        <Panel title="Cell Inspector">
-          <CellInspector
-            cell={cell.data}
-            overview={selectedOverview}
-            cropCycleId={selectedCropCycleId}
-            isLoading={cell.isLoading}
-            error={cell.error}
-            onRetry={cell.reload}
+          </div>
+        )}
+
+        {!isLoadingTerrain && !terrainError && terrainCells.length > 0 && overview.data && (
+          <TerrainView
+            cells={terrainCells}
+            gridWidth={overview.data.grid_width}
+            gridHeight={overview.data.grid_height}
           />
-        </Panel>
-      }
-    />
+        )}
+      </div>
+
+      <TopStrip
+        health={health.data}
+        healthError={health.error}
+        farms={farms.data ?? []}
+        farm={farm.data}
+        plot={plot}
+        cropCycles={cropCycles.data ?? []}
+        selectedFarmId={selectedFarmId}
+        selectedCropCycleId={selectedCropCycleId}
+        onSelectFarm={selectFarm}
+        onSelectCropCycle={selectCropCycle}
+      />
+
+      {/* Lotes, en el borde del terreno. */}
+      <div className="absolute left-5 top-1/2 z-20 -translate-y-1/2">
+        <PlotSelector
+          plots={farm.data?.plots ?? []}
+          selectedPlotId={selectedPlotId}
+          onSelect={selectPlot}
+        />
+      </div>
+
+      {/* Leyenda: abajo a la izquierda, fuera del camino del terreno. */}
+      <div className="absolute bottom-5 left-5 z-20">
+        <RiskLegend cells={overview.data?.cells ?? []} viewMode={viewMode} />
+      </div>
+
+      {/* Modos: centrados abajo, la acción más repetida después de seleccionar. */}
+      <div className="absolute bottom-5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2">
+        <ViewModeSwitch value={viewMode} onChange={setViewMode} />
+        <TerrainModeSwitch value={terrainMode} onChange={setTerrainMode} />
+      </div>
+
+      {/* Inspector. */}
+      <aside className="floating absolute right-5 top-24 z-20 max-h-[calc(100dvh-8rem)] w-[22rem] overflow-y-auto rounded-xl p-4">
+        <CellInspector
+          cell={cell.data}
+          overview={selectedOverview}
+          cells={overview.data?.cells ?? []}
+          plot={plot}
+          cropCycleId={selectedCropCycleId}
+          isLoading={cell.isLoading}
+          error={cell.error}
+          onRetry={cell.reload}
+          onClear={clearSelection}
+        />
+      </aside>
+
+      {/* Lo que cambia por selección, anunciado a quien no lo ve. */}
+      <p aria-live="polite" className="sr-only">
+        {cell.data
+          ? `Celda ${cell.data.cell_code} seleccionada.${
+              selectedOverview
+                ? ` Riesgo ${selectedOverview.risk_level}, ${selectedOverview.projected_yield_kg} kilogramos proyectados.`
+                : ""
+            }`
+          : "Ninguna celda seleccionada."}
+      </p>
+    </div>
   );
 }

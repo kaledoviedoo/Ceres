@@ -16,7 +16,6 @@ import { buildOverview } from "./fixtures";
 function renderGrid(overrides: Partial<Parameters<typeof CellGrid>[0]> = {}) {
   const overview = buildOverview();
   const onSelect = vi.fn();
-  const onHover = vi.fn();
 
   render(
     <CellGrid
@@ -25,14 +24,12 @@ function renderGrid(overrides: Partial<Parameters<typeof CellGrid>[0]> = {}) {
       gridHeight={overview.grid_height}
       viewMode="risk"
       selectedCellId={null}
-      hoveredCellId={null}
       onSelect={onSelect}
-      onHover={onHover}
       {...overrides}
     />,
   );
 
-  return { overview, onSelect, onHover };
+  return { overview, onSelect };
 }
 
 describe("CellGrid", () => {
@@ -71,14 +68,17 @@ describe("CellGrid", () => {
     expect(levels).toEqual(new Set(["low", "medium", "high"]));
   });
 
-  it("avisa del cell_id al hacer hover", async () => {
+  it("resalta la celda bajo el cursor sin salir del componente", async () => {
+    // El hover es estado local: en 3D pasa decenas de veces por segundo y no
+    // le interesa a nadie fuera de la vista.
     const user = userEvent.setup();
-    const { overview, onHover } = renderGrid();
+    const { overview } = renderGrid();
     const target = overview.cells[42]!;
+    const cell = screen.getByTestId(`cell-${target.cell_code}`);
 
-    await user.hover(screen.getByTestId(`cell-${target.cell_code}`));
+    await user.hover(cell);
 
-    expect(onHover).toHaveBeenCalledWith(target.cell_id);
+    expect(cell.style.boxShadow).toContain("#edeae3");
   });
 
   it("avisa del cell_id al hacer click", async () => {
@@ -210,9 +210,7 @@ describe("CellGrid", () => {
       gridWidth: 20,
       gridHeight: 20,
       selectedCellId: null,
-      hoveredCellId: null,
       onSelect: vi.fn(),
-      onHover: vi.fn(),
     };
     const { rerender } = render(<CellGrid {...props} viewMode="risk" />);
 

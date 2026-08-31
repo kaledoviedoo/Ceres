@@ -38,7 +38,13 @@ La flecha va en un solo sentido. Una capa nunca llama hacia arriba.
 ### La regla que no se negocia
 
 **El frontend 3D no calcula agricultura.** React Three Fiber hace hover, click,
-seleccion, colores y camara. No hay `yield =`, `loss =` ni `risk =` en TypeScript.
+seleccion, colores y camara. No hay `yield =`, `loss =` ni `risk =` en
+TypeScript, y hay un grep en la verificacion de cada fase que lo comprueba.
+
+`lib/terrain/geometry.ts` es la unica matematica del frontend y es puramente de
+presentacion: convierte coordenadas de malla y metros sobre el nivel del mar en
+unidades de mundo 3D. La exageracion vertical decide cuantos pixeles ocupa un
+desnivel, no cuanto mide.
 
 Motivo: si la formula vive en dos sitios, se separan. Y una demo bonita cuya
 matematica esta escondida en un componente React no es un producto, es una
@@ -81,27 +87,48 @@ ceres/
 ceres/apps/web/
 ├── app/page.tsx        el UNICO sitio que pide datos a la API
 ├── components/
-│   ├── dashboard/      shell, selector, barra de estado
-│   ├── terrain/        CellGrid — se sustituye por R3F en la fase 7
+│   ├── dashboard/      franja superior, selector de lote
+│   ├── terrain/        TerrainView -> TerrainCanvas (3D) | CellGrid (2D)
 │   ├── cell-inspector/ panel lateral
 │   └── ui/             primitivas
 ├── lib/
-│   ├── api/            cliente HTTP, endpoints, errores
+│   ├── api/            cliente HTTP, endpoints, errores, configuracion
 │   ├── types/          espejo de los schemas Pydantic
+│   ├── terrain/        geometria de la escena y paleta 3D
 │   └── presentation/   valores -> colores, formato
 ├── stores/             Zustand: SOLO estado de interfaz
 └── tests/
 ```
 
-### Como esta preparado el frontend para el 3D
+### El punto de sustitucion
 
-`CellGrid` recibe celdas ya calculadas y emite `cell_id` en hover y click. No
-pide datos, no calcula nada y no sabe que es una prediccion. Un `TerrainCanvas`
-de React Three Fiber podra ocupar su lugar implementando esa misma interfaz sin
-que el panel lateral, el store ni el cliente de API se enteren.
+`TerrainView` decide que representacion se monta y traduce store <-> props:
 
-La correspondencia se mantiene por `cell_id`, no por posicion: en 3D el
-raycasting devolvera ese mismo identificador.
+```
+TerrainView
+   |-- terrainMode "3d" --> TerrainCanvas   (React Three Fiber)
+   `-- terrainMode "2d" --> CellGrid        (malla plana)
+```
+
+Las dos cumplen el mismo contrato estrecho: reciben celdas ya calculadas y
+emiten `cell_id`. Ninguna importa `lib/api/` ni `stores/`, y por eso `page.tsx`,
+el Cell Inspector y el cliente de API no se enteran de cual esta montada.
+
+La correspondencia se mantiene por `cell_id`, no por posicion: el raycasting de
+la escena 3D devuelve ese mismo identificador que devolvia un click en 2D.
+
+### Como se representa el terreno
+
+Dos mallas instanciadas —el bloque de suelo y la losa analitica encima—, dos
+llamadas de dibujo para 400 celdas. La escena se dibuja bajo demanda
+(`frameloop="demand"`): parada no consume nada.
+
+El hover no pasa por React: vive en referencias y escribe dos colores de
+instancia. Medido, 0,007 ms por movimiento del raton.
+
+Un canvas de WebGL no es accesible, asi que la malla existe tambien como DOM
+real —`AccessibleCellLayer`, invisible y sin capturar el puntero— con roving
+tabindex y flechas.
 
 Tres reglas sostienen esa sustituibilidad:
 

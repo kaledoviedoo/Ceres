@@ -1,9 +1,13 @@
 /**
- * TerrainView: el contenedor que traduce store <-> props.
+ * TerrainView: el punto de sustitución.
  *
- * Es el punto de sustitución de la fase 7 y el que aísla el hover. Lo que se
- * fija aquí es que `CellGrid` sigue sin conocer el store, y que mover el ratón
- * no obliga a repintar nada fuera de la malla.
+ * Lo que se fija aquí es que cambiar de representación es cambiar qué
+ * componente se monta, y que ambos cumplen el mismo contrato: reciben celdas
+ * ya calculadas y emiten `cell_id`. Ninguno conoce la API.
+ *
+ * El canvas 3D se sustituye por un doble porque jsdom no tiene WebGL. No es una
+ * limitación del test: lo que importa comprobar aquí es el cableado, y el
+ * comportamiento de la escena se verifica en el navegador real.
  */
 
 import { act, render, screen } from "@testing-library/react";
@@ -12,16 +16,30 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TerrainView } from "@/components/terrain/TerrainView";
 import { useCeresStore } from "@/stores/useCeresStore";
-import { buildOverview } from "./fixtures";
+import { buildTerrainCells } from "./fixtures";
+
+vi.mock("@/components/terrain/TerrainCanvas", () => ({
+  TerrainCanvas: ({
+    cells,
+    onSelect,
+  }: {
+    cells: { cell_id: string; cell_code: string }[];
+    onSelect: (id: string) => void;
+  }) => (
+    <div data-testid="terrain-canvas" data-cells={cells.length}>
+      <button type="button" onClick={() => onSelect(cells[7]!.cell_id)}>
+        seleccionar
+      </button>
+    </div>
+  ),
+}));
 
 const initial = useCeresStore.getState();
 
 function renderTerrain() {
-  const overview = buildOverview();
-  render(
-    <TerrainView cells={overview.cells} gridWidth={20} gridHeight={20} />,
-  );
-  return overview;
+  const cells = buildTerrainCells();
+  const view = render(<TerrainView cells={cells} gridWidth={20} gridHeight={20} />);
+  return { cells, view };
 }
 
 describe("TerrainView", () => {
@@ -29,55 +47,55 @@ describe("TerrainView", () => {
     useCeresStore.setState(initial, true);
   });
 
-  it("pinta la malla leyendo el modo de vista del store", () => {
+  it("monta el terreno 3D por defecto", () => {
     renderTerrain();
 
+    expect(screen.getByTestId("terrain-canvas")).toHaveAttribute("data-cells", "400");
+    expect(screen.queryByRole("grid")).not.toBeInTheDocument();
+  });
+
+  it("monta la malla plana al cambiar de representación", () => {
+    act(() => useCeresStore.getState().setTerrainMode("2d"));
+    renderTerrain();
+
+    expect(screen.queryByTestId("terrain-canvas")).not.toBeInTheDocument();
     expect(screen.getAllByRole("gridcell")).toHaveLength(400);
-    expect(useCeresStore.getState().viewMode).toBe("risk");
   });
 
-  it("un click escribe el cell_id en el store", async () => {
+  it("las dos vistas escriben el mismo cell_id en el store", async () => {
     const user = userEvent.setup();
-    const overview = renderTerrain();
-    const target = overview.cells[123]!;
+    const { cells, view } = renderTerrain();
 
-    await user.click(screen.getByTestId(`cell-${target.cell_code}`));
+    await user.click(screen.getByRole("button", { name: "seleccionar" }));
+    const desdeElCanvas = useCeresStore.getState().selectedCellId;
+    expect(desdeElCanvas).toBe(cells[7]!.cell_id);
 
-    expect(useCeresStore.getState().selectedCellId).toBe(target.cell_id);
+    // Se desmonta antes de montar la otra vista: si no, quedan dos mallas en
+    // el documento y la consulta encuentra la celda por duplicado.
+    view.unmount();
+    act(() => {
+      useCeresStore.setState(initial, true);
+      useCeresStore.getState().setTerrainMode("2d");
+    });
+    render(<TerrainView cells={cells} gridWidth={20} gridHeight={20} />);
+
+    await user.click(screen.getByTestId(`cell-${cells[7]!.cell_code}`));
+    expect(useCeresStore.getState().selectedCellId).toBe(desdeElCanvas);
   });
 
-  it("el hover escribe hoveredCellId sin tocar la selección", async () => {
-    const user = userEvent.setup();
-    const overview = renderTerrain();
-    act(() => useCeresStore.getState().selectCell("celda-fijada"));
-
-    await user.hover(screen.getByTestId(`cell-${overview.cells[10]!.cell_code}`));
-
-    expect(useCeresStore.getState().hoveredCellId).toBe(overview.cells[10]!.cell_id);
-    expect(useCeresStore.getState().selectedCellId).toBe("celda-fijada");
-  });
-
-  it("un consumidor que solo mira la selección no se repinta con el hover", () => {
-    // Esta es la razón de que TerrainView exista: antes la página leía el store
-    // entero y cada celda que tocaba el cursor la repintaba completa.
+  it("un consumidor que solo mira la selección no se repinta con el modo de vista", () => {
     const renders = vi.fn();
 
     function SoloSeleccion() {
       const selected = useCeresStore((state) => state.selectedCellId);
       renders();
-      return <span data-testid="observador">{selected ?? "ninguna"}</span>;
+      return <span>{selected ?? "ninguna"}</span>;
     }
 
     render(<SoloSeleccion />);
     const antes = renders.mock.calls.length;
 
-    // Sin act() React no vacía la cola y el test pasaría sin probar nada.
-    act(() => {
-      useCeresStore.getState().hoverCell("celda-a");
-      useCeresStore.getState().hoverCell("celda-b");
-      useCeresStore.getState().hoverCell("celda-c");
-    });
-
+    act(() => useCeresStore.getState().setViewMode("yield"));
     expect(renders.mock.calls.length).toBe(antes);
 
     act(() => useCeresStore.getState().selectCell("celda-x"));

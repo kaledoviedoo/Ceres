@@ -686,6 +686,122 @@ corren en orden de declaracion—.
 
 ---
 
+## D-036 — Austeridad cromatica: el color solo significa riesgo
+
+**Decision.** Todo el cromo de la interfaz es acromatico —negro-suelo a hueso—.
+La unica saturacion en pantalla es la rampa semantica de riesgo, en el terreno y
+en la leyenda.
+
+**Por que.** Hasta la fase 6, `--color-ceres-accent` y `--color-risk-low` eran el
+mismo hex (`#22c55e`): "activo" y "riesgo bajo" se veian igual. Habia tres
+salidas —anadir un cuarto tono frio, desaturar el verde de marca, o sacar el
+color del cromo— y la tercera es la unica que no crea un problema nuevo.
+
+Ademas convierte una restriccion en una regla legible: si algo tiene color,
+habla de riesgo. En una herramienta cuyo trabajo es que un agronomo distinga
+tres niveles de un vistazo, que nada compita por la atencion cromatica es una
+ventaja, no una renuncia.
+
+**Neutros calidos y no frios.** Un gris azulado leeria como dashboard generico;
+el negro con fondo de tierra y el hueso vienen del material del que trata el
+producto.
+
+**Coste.** La interfaz no tiene un color de marca visible. Se acepta: la marca
+es la forma del terreno, no un acento.
+
+---
+
+## D-037 — El terreno es un bloque extraido, no un plano
+
+**Decision.** La parcela se dibuja como un volumen solido con paredes de tierra
+visibles. El analisis se pinta SOLO en la cara superior; los laterales son
+suelo.
+
+**Por que.** Un plano coloreado es un mapa; un bloque es una parcela. La
+diferencia importa para lo que CERES dice ser: el usuario tiene que percibir que
+inspecciona un trozo de campo real dividido en celdas, no una grafica cuadrada.
+Separar la capa analitica del suelo hace explicito que el color es una lectura
+sobre el terreno, no el terreno mismo.
+
+**Como.** Dos mallas instanciadas: el bloque de suelo y una losa fina encima.
+Dos llamadas de dibujo para 400 celdas, en vez de cuatrocientos objetos.
+
+**Proporciones.** El primer intento (separacion 0.06, exageracion 3, grosor 1.2)
+producia cuatrocientas columnas: un grafico de barras. Ahora la separacion es
+0.02 —lo justo para ver la reticula—, el grosor 2.6 y la exageracion 1.5, y el
+relieve se lee como ondulacion de una superficie.
+
+**Exageracion vertical.** El terreno real varia 3,01 m sobre 20 × 20 m. A escala
+1:1 la hondonada de la zona critica seria invisible desde una camara que abarca
+el lote. Se exagera como lo hace un perfil topografico. No altera ningun dato: la
+elevacion sigue mostrandose en metros en el inspector.
+
+---
+
+## D-038 — El hover sale del estado global
+
+**Decision.** `hoveredCellId` y `hoverCell` desaparecen del store. Cada vista
+resuelve el hover por dentro: `CellGrid` con estado local, `TerrainCanvas` con
+referencias y escritura imperativa.
+
+**Por que.** En 2D costaba 0,01 ms porque el `memo` de `CellSquare` lo absorbia.
+En 3D `pointermove` dispara decenas de veces por segundo y cada evento habria
+provocado un render de React mas una reconciliacion de la escena.
+
+**Medido despues del cambio:** 0,007 ms por movimiento del raton sobre el
+terreno, con 400 celdas. El coste de entrar y salir de una celda son dos
+escrituras de color de instancia y una `transform`.
+
+**Esto no debilita la regla del store, la refuerza.** Solo vive ahi lo que de
+verdad es global; el hover no le interesa a nadie fuera de la vista que lo
+dibuja. El contrato que importa —`cell_id` → `selectCell` → store → page → API—
+no cambia.
+
+---
+
+## D-039 — Un canvas de WebGL no es accesible: la malla vive tambien en el DOM
+
+**Decision.** El contenedor del canvas lleva `aria-hidden`, y sobre el se monta
+`AccessibleCellLayer`: la misma malla como DOM real —`grid` → `row` →
+`gridcell`, roving tabindex y flechas— invisible y sin capturar el puntero.
+
+**Por que.** Un canvas es un mapa de pixeles: no tiene estructura recorrible ni
+recibe foco por celda. Dar el terreno 3D por accesible porque se ve bien seria
+perder de golpe todo lo que la fase 6 construyo.
+
+`pointer-events: none` en la capa es imprescindible: sin eso, cuatrocientos
+botones invisibles se tragarian los arrastres destinados a la camara. El teclado
+llega igual, porque el foco no depende del puntero.
+
+**Medido:** 13 paradas de tabulacion en toda la pagina —no 400—, flechas
+moviendo el foco por la malla, y una region `aria-live` que anuncia la celda
+seleccionada.
+
+**Ademas se conserva la vista 2D** tras un conmutador visible: reserva cuando
+WebGL no esta disponible o el equipo va justo, y lectura sin perspectiva.
+
+---
+
+## D-040 — Dos peticiones para el terreno, sin tocar el backend
+
+**Decision.** El canvas 3D une `GET /plots/{id}/cells` y
+`GET /plots/{id}/overview` por `cell_id` en el frontend.
+
+**Por que.** El relieve necesita `elevation_m`, que esta en `CellSummary` y no en
+`CellOverview`. Anadirla al overview habria sido un cambio de backend
+innecesario, y ademas habria mezclado dos cosas distintas.
+
+El reparto actual es el correcto: `/cells` dice **como ES** la parcela —da la
+geometria— y `/overview` dice **que predice el motor** sobre ella —da el color—.
+Emparejar dos listas por identificador no es una formula agronomica: los valores
+llegan ya calculados.
+
+**Regla que se mantiene.** Cero formulas agricolas en TypeScript, verificado por
+grep. `lib/terrain/geometry.ts` solo convierte coordenadas de malla y metros en
+unidades de mundo.
+
+---
+
 ## Relacionado
 
 - [architecture.md](architecture.md)

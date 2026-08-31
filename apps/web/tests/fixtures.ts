@@ -6,6 +6,7 @@
  * pueda afirmar que la interfaz muestra exactamente lo que dice el backend.
  */
 
+import type { TerrainCell } from "@/lib/terrain/types";
 import type {
   CellDetail,
   CellOverview,
@@ -166,4 +167,23 @@ export function buildOverview(): PlotOverview {
     persisted: false,
     cells,
   };
+}
+
+/**
+ * Malla de terreno: metricas + elevacion, tal como la ve el canvas 3D.
+ *
+ * La elevacion imita el relieve real —una ladera de sur a norte con una
+ * hondonada en el foco critico— para que los tests de geometria trabajen con
+ * una forma parecida a la del dataset.
+ */
+export function buildTerrainCells(): TerrainCell[] {
+  return buildOverview().cells.map((cell) => {
+    const rise = (cell.y / 19) * 2.4;
+    const dip = cell.x <= 5 && cell.y >= 13 && cell.y <= 16 ? 0.6 : 0;
+    return {
+      ...cell,
+      elevation_m: 1180 + rise - dip,
+      slope_deg: 4 + (cell.x % 5),
+    };
+  });
 }

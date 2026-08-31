@@ -64,7 +64,7 @@ export function PredictionPanel({ cellId, cropCycleId }: PredictionPanelProps) {
 
   if (!cropCycleId) {
     return (
-      <p className="text-xs text-ceres-dim">
+      <p className="text-xs text-bone-600">
         Este lote no tiene ningún ciclo de cultivo activo, así que no hay nada sobre lo que
         predecir.
       </p>
@@ -77,12 +77,12 @@ export function PredictionPanel({ cellId, cropCycleId }: PredictionPanelProps) {
         type="button"
         onClick={runPrediction}
         disabled={isRunning}
-        className="w-full rounded bg-ceres-accent px-3 py-2 text-sm font-semibold text-ceres-bg transition-colors hover:bg-ceres-accent-dim disabled:cursor-not-allowed disabled:opacity-50"
+        className="w-full rounded bg-bone-100 px-3 py-2 text-sm font-medium text-soil-900 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
       >
         {isRunning ? "Ejecutando el motor…" : "Guardar predicción"}
       </button>
 
-      <p className="text-[11px] leading-snug text-ceres-dim">
+      <p className="text-[11px] leading-snug text-bone-600">
         Ejecuta el motor en el servidor y guarda el resultado en el histórico. Las
         predicciones son inmutables: cada ejecución añade un registro nuevo.
       </p>
@@ -93,10 +93,10 @@ export function PredictionPanel({ cellId, cropCycleId }: PredictionPanelProps) {
       {prediction && (
         <div
           data-testid="saved-prediction"
-          className="space-y-3 rounded border border-ceres-border bg-ceres-elevated p-3"
+          className="space-y-3 rounded border border-soil-600 bg-soil-800 p-3"
         >
           <div className="flex items-center justify-between">
-            <span className="text-[10px] uppercase tracking-widest text-ceres-dim">
+            <span className="eyebrow">
               Predicción guardada
             </span>
             <Tag>{prediction.model_version}</Tag>
@@ -125,7 +125,7 @@ export function PredictionPanel({ cellId, cropCycleId }: PredictionPanelProps) {
                 value={
                   <span>
                     {formatScore(prediction.factors[key])}
-                    <span className="ml-2 text-ceres-muted">
+                    <span className="ml-2 text-bone-400">
                       {formatFactorDelta(prediction.factors[key])}
                     </span>
                   </span>
@@ -134,7 +134,7 @@ export function PredictionPanel({ cellId, cropCycleId }: PredictionPanelProps) {
             ))}
           </MetricGroup>
 
-          <p className="tabular text-[10px] text-ceres-dim">
+          <p className="tabular text-[10px] text-bone-600">
             Registrada el {formatDateTime(prediction.created_at)}
           </p>
         </div>

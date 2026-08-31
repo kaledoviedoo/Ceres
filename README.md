@@ -37,8 +37,8 @@ ESTADO  ->  PREDICCION  ->  OBSERVACION  ->  COSECHA  ->  VALIDACION
 | 4.6 | Paridad Python/SQL, zona critica sintetica, idempotencia del seed | ✅ |
 | 5 | Frontend 2D (grid 20x20) | ✅ |
 | 6 | Integracion Next.js ↔ FastAPI | ✅ (hecha en la fase 5) |
-| 7 | React Three Fiber | ⬜ siguiente |
-| 8 | Observaciones | ⬜ |
+| 7 | React Three Fiber | ✅ |
+| 8 | Observaciones | ⬜ siguiente |
 | 9 | Cosechas y error de prediccion | ⬜ |
 | 10 | Historico prediccion vs realidad | ⬜ |
 
@@ -53,8 +53,12 @@ Next.js  ->  FastAPI  ->  Prediction Engine  ->  Supabase
    +-- Cell Inspector <- prediccion guardada -------+
 ```
 
-**392 tests**: 349 en el backend (236 unit + 73 SQLite + 40 PostgreSQL real) y
-43 en el frontend.
+El terreno se representa en 3D con React Three Fiber: un bloque de tierra de
+20 × 20 m cuyo relieve sale de la elevacion real y cuya cara superior se pinta
+con las metricas del motor. Camara orbital, hover, seleccion y jalon de celda.
+
+**438 tests**: 349 en el backend (236 unit + 73 SQLite + 40 PostgreSQL real) y
+89 en el frontend.
 
 **Verificado contra Supabase real** (PostgreSQL 17, proyecto `ceres-mvp`):
 migraciones, seed de 800 celdas, constraints, trigger de inmutabilidad, vista

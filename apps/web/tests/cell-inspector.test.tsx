@@ -11,16 +11,19 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CellInspector } from "@/components/cell-inspector/CellInspector";
-import { CELL_ID, CYCLE_ID, cellDetail, cellOverview, prediction } from "./fixtures";
+import { CELL_ID, CYCLE_ID, cellDetail, cellOverview, farmDetail, prediction } from "./fixtures";
 
 function renderInspector(props: Partial<Parameters<typeof CellInspector>[0]> = {}) {
   return render(
     <CellInspector
       cell={cellDetail}
       overview={cellOverview}
+      cells={[cellOverview]}
+      plot={farmDetail.plots[0]!}
       cropCycleId={CYCLE_ID}
       isLoading={false}
       error={null}
+      onClear={() => {}}
       {...props}
     />,
   );
@@ -32,11 +35,13 @@ afterEach(() => {
 });
 
 describe("estados", () => {
-  it("sin celda seleccionada, explica qué hacer", () => {
+  it("sin celda seleccionada, muestra el resumen del lote", () => {
+    // Un panel de 360 px esperando un clic es espacio desperdiciado.
     renderInspector({ cell: null });
 
-    expect(screen.getByText(/ninguna celda seleccionada/i)).toBeInTheDocument();
-    expect(screen.getByText(/haz click en un cuadro/i)).toBeInTheDocument();
+    expect(screen.getByText("Plot A")).toBeInTheDocument();
+    expect(screen.getByText(/reparto del riesgo/i)).toBeInTheDocument();
+    expect(screen.getByText(/haz clic en una celda/i)).toBeInTheDocument();
   });
 
   it("muestra estado de carga", () => {
@@ -68,16 +73,14 @@ describe("contenido", () => {
     renderInspector();
 
     expect(screen.getByText("A-00240")).toBeInTheDocument();
-    expect(screen.getByText(/x=19/)).toBeInTheDocument();
-    expect(screen.getByText(/y=11/)).toBeInTheDocument();
+    expect(screen.getByText(/x 19/)).toBeInTheDocument();
+    expect(screen.getByText(/y 11/)).toBeInTheDocument();
   });
 
   it("muestra los campos mínimos exigidos por la fase 5", () => {
     renderInspector();
 
     for (const label of [
-      "Posición X",
-      "Posición Y",
       "Pendiente",
       "Calidad de suelo",
       "Densidad de siembra",
@@ -98,7 +101,7 @@ describe("contenido", () => {
     renderInspector();
 
     expect(screen.getByText(/estado del terreno/i)).toBeInTheDocument();
-    expect(screen.getByText(/estimación actual \(sin guardar\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/estimación actual · sin guardar/i)).toBeInTheDocument();
   });
 });
 

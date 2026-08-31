@@ -1,92 +1,51 @@
 "use client";
 
-/** Selector finca → lote → ciclo de cultivo. */
+/**
+ * Selector de lote, en el borde del terreno.
+ *
+ * Píldoras verticales y no un desplegable: los lotes son pocos, se comparan
+ * entre sí y cambiar de uno a otro es la acción más frecuente después de
+ * seleccionar una celda. Tenerlos siempre visibles junto al terreno cuesta
+ * cuarenta píxeles y ahorra dos clics cada vez.
+ */
 
-import type { CropCycle, FarmDetail, Farm } from "@/lib/types/api";
+import type { Plot } from "@/lib/types/api";
 
 interface PlotSelectorProps {
-  farms: Farm[];
-  farm: FarmDetail | null;
-  cropCycles: CropCycle[];
-  selectedFarmId: string | null;
+  plots: Plot[];
   selectedPlotId: string | null;
-  selectedCropCycleId: string | null;
-  onSelectFarm: (id: string) => void;
-  onSelectPlot: (id: string) => void;
-  onSelectCropCycle: (id: string) => void;
+  onSelect: (plotId: string) => void;
 }
 
-const SELECT_CLASS =
-  "w-full rounded border border-ceres-border-strong bg-ceres-elevated px-2 py-1.5 text-sm text-ceres-text disabled:cursor-not-allowed disabled:opacity-40";
+export function PlotSelector({ plots, selectedPlotId, onSelect }: PlotSelectorProps) {
+  if (plots.length <= 1) return null;
 
-export function PlotSelector({
-  farms,
-  farm,
-  cropCycles,
-  selectedFarmId,
-  selectedPlotId,
-  selectedCropCycleId,
-  onSelectFarm,
-  onSelectPlot,
-  onSelectCropCycle,
-}: PlotSelectorProps) {
   return (
-    <div className="grid gap-3">
-      <label className="grid gap-1">
-        <span className="text-[10px] uppercase tracking-widest text-ceres-dim">Finca</span>
-        <select
-          className={SELECT_CLASS}
-          value={selectedFarmId ?? ""}
-          onChange={(event) => onSelectFarm(event.target.value)}
-          disabled={farms.length === 0}
-        >
-          {farms.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="grid gap-1">
-        <span className="text-[10px] uppercase tracking-widest text-ceres-dim">Lote</span>
-        <select
-          className={SELECT_CLASS}
-          value={selectedPlotId ?? ""}
-          onChange={(event) => onSelectPlot(event.target.value)}
-          disabled={!farm || farm.plots.length === 0}
-        >
-          {(farm?.plots ?? []).map((plot) => (
-            <option key={plot.id} value={plot.id}>
-              {plot.name} — {plot.grid_width}×{plot.grid_height} ({plot.cell_count} celdas)
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="grid gap-1">
-        <span className="text-[10px] uppercase tracking-widest text-ceres-dim">
-          Ciclo de cultivo
-        </span>
-        <select
-          className={SELECT_CLASS}
-          value={selectedCropCycleId ?? ""}
-          onChange={(event) => onSelectCropCycle(event.target.value)}
-          disabled={cropCycles.length === 0}
-        >
-          {cropCycles.length === 0 && <option value="">Sin ciclos</option>}
-          {cropCycles.map((cycle) => (
-            <option key={cycle.id} value={cycle.id}>
-              {cycle.name} — {cycle.crop.name}
-            </option>
-          ))}
-        </select>
-        {cropCycles.length === 0 && (
-          <span className="text-[11px] text-ceres-dim">
-            Este lote no tiene ciclos: no se puede estimar rendimiento sobre él.
-          </span>
-        )}
-      </label>
+    <div
+      role="group"
+      aria-label="Lote"
+      className="floating flex flex-col gap-0.5 rounded-full p-0.5"
+    >
+      {plots.map((plot) => {
+        const active = plot.id === selectedPlotId;
+        return (
+          <button
+            key={plot.id}
+            type="button"
+            aria-pressed={active}
+            title={`${plot.name} · ${plot.grid_width}×${plot.grid_height}`}
+            onClick={() => onSelect(plot.id)}
+            className={`grid h-9 w-9 place-items-center rounded-full font-mono text-xs transition-colors ${
+              active
+                ? "bg-bone-100 text-soil-900"
+                : "text-bone-400 hover:bg-soil-700 hover:text-bone-100"
+            }`}
+          >
+            {plot.code}
+            <span className="sr-only">{plot.name}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

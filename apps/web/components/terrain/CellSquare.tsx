@@ -79,9 +79,9 @@ function CellSquareComponent({
         // El anillo de selección va por box-shadow para no alterar el tamaño
         // del cuadro y no descuadrar la malla.
         boxShadow: isSelected
-          ? "0 0 0 2px #e6f0ea, 0 0 0 4px #0a0f0d"
+          ? "0 0 0 2px #edeae3, 0 0 0 4px #0b0d0c"
           : isHovered
-            ? "0 0 0 1px #e6f0ea"
+            ? "0 0 0 1px #edeae3"
             : undefined,
         zIndex: isSelected ? 20 : undefined,
       }}

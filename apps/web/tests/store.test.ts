@@ -23,6 +23,7 @@ describe("store de interfaz", () => {
     expect(state.selectedFarmId).toBeNull();
     expect(state.selectedCellId).toBeNull();
     expect(state.viewMode).toBe("risk");
+    expect(state.terrainMode).toBe("3d");
   });
 
   it("cambiar de finca invalida lote, ciclo y celda", () => {
@@ -55,15 +56,21 @@ describe("store de interfaz", () => {
     expect(state.selectedCellId).toBeNull();
   });
 
-  it("separa hover de selección", () => {
-    // El hover cambia con cada píxel; la selección solo con un click. Si
-    // compartieran estado, mover el ratón repintaría el panel lateral entero.
-    useCeresStore.getState().selectCell("celda-1");
-    useCeresStore.getState().hoverCell("celda-2");
+  it("no guarda el hover: es efímero y lo resuelve cada vista", () => {
+    // En 3D `pointermove` dispara decenas de veces por segundo. Pasarlo por el
+    // store provocaría un render de React y una reconciliación de la escena
+    // por evento.
+    const state = useCeresStore.getState() as unknown as Record<string, unknown>;
 
-    const state = useCeresStore.getState();
-    expect(state.selectedCellId).toBe("celda-1");
-    expect(state.hoveredCellId).toBe("celda-2");
+    expect(state.hoveredCellId).toBeUndefined();
+    expect(state.hoverCell).toBeUndefined();
+  });
+
+  it("guarda cómo se representa el terreno", () => {
+    expect(useCeresStore.getState().terrainMode).toBe("3d");
+
+    useCeresStore.getState().setTerrainMode("2d");
+    expect(useCeresStore.getState().terrainMode).toBe("2d");
   });
 
   it("no guarda datos de la API, solo identificadores", () => {
@@ -73,11 +80,11 @@ describe("store de interfaz", () => {
     const keys = Object.keys(state).filter((key) => typeof state[key] !== "function");
 
     expect(keys.sort()).toEqual([
-      "hoveredCellId",
       "selectedCellId",
       "selectedCropCycleId",
       "selectedFarmId",
       "selectedPlotId",
+      "terrainMode",
       "viewMode",
     ]);
   });

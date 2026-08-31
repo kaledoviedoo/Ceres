@@ -17,7 +17,7 @@ export function RiskBadge({ level }: { level: RiskLevel }) {
 /** Etiqueta neutra, para versiones de modelo y similares. */
 export function Tag({ children }: { children: React.ReactNode }) {
   return (
-    <span className="tabular inline-flex items-center rounded border border-ceres-border-strong px-2 py-0.5 text-xs text-ceres-muted">
+    <span className="tabular inline-flex items-center rounded border border-soil-600 px-2 py-0.5 text-xs text-bone-400">
       {children}
     </span>
   );

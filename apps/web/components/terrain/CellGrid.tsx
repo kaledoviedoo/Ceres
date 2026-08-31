@@ -3,13 +3,16 @@
 /**
  * Malla 20×20 del lote. Cada cuadro es ~1 m².
  *
- * ESTE COMPONENTE ES EL QUE SE SUSTITUYE EN LA FASE 7.
+ * VISTA ALTERNA. El terreno 3D es la representación principal; esta malla plana
+ * se conserva para tres cosas que el canvas no cubre: reserva cuando WebGL no
+ * está disponible o el equipo va justo, lectura rápida sin perspectiva, y una
+ * ruta de teclado que no depende de una capa superpuesta.
  *
  * Su contrato con el resto de la aplicación es deliberadamente estrecho:
- * recibe celdas ya calculadas y avisa de hover y click. No pide datos, no
- * calcula nada y no sabe qué es una predicción. Un `TerrainCanvas` de React
- * Three Fiber podrá ocupar su lugar implementando exactamente esta interfaz,
- * sin que el panel lateral, el store ni el cliente de API se enteren.
+ * recibe celdas ya calculadas y avisa del click. No pide datos, no calcula
+ * nada y no sabe qué es una predicción. `TerrainCanvas` implementa esa misma
+ * interfaz, y por eso el panel lateral, el store y el cliente de API no se
+ * enteran de cuál de las dos está montada.
  *
  * La correspondencia `GridCell ↔ cuadro` se mantiene por `cell_id`, no por
  * posición: en 3D el raycasting devolverá ese mismo identificador.
@@ -32,9 +35,7 @@ export interface CellGridProps {
   gridHeight: number;
   viewMode: ViewMode;
   selectedCellId: string | null;
-  hoveredCellId: string | null;
   onSelect: (cellId: string) => void;
-  onHover: (cellId: string | null) => void;
 }
 
 /** Posición dentro de la malla en coordenadas de dominio (x este, y norte). */
@@ -49,10 +50,10 @@ export function CellGrid({
   gridHeight,
   viewMode,
   selectedCellId,
-  hoveredCellId,
   onSelect,
-  onHover,
 }: CellGridProps) {
+  // El hover es efímero y solo le importa a esta vista: estado local, no store.
+  const [hoveredCellId, setHoveredCellId] = useState<string | null>(null);
   const range = useMemo(() => metricRange(cells, viewMode), [cells, viewMode]);
 
   // La API devuelve las celdas ordenadas de sur a norte (y creciente), pero en
@@ -138,7 +139,7 @@ export function CellGrid({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <div className="flex w-full max-w-[680px] items-center justify-between text-[10px] uppercase tracking-widest text-ceres-dim">
+      <div className="flex w-full max-w-[680px] items-center justify-between text-[10px] uppercase tracking-widest text-bone-600">
         <span>Oeste</span>
         <span>Norte ↑</span>
         <span>Este</span>
@@ -159,9 +160,9 @@ export function CellGrid({
         aria-label={`Malla del lote, ${gridWidth} por ${gridHeight} celdas de 1 m². Usa las flechas para recorrerla.`}
         aria-rowcount={gridHeight}
         aria-colcount={gridWidth}
-        className="w-full max-w-[680px] rounded border border-ceres-border-strong bg-ceres-border p-px"
+        className="w-full max-w-[680px] rounded border border-soil-600 bg-soil-700 p-px"
         onKeyDown={handleKeyDown}
-        onMouseLeave={() => onHover(null)}
+        onMouseLeave={() => setHoveredCellId(null)}
       >
         {rows.map((row, rowIndex) => (
           <div
@@ -181,14 +182,14 @@ export function CellGrid({
                 isHovered={cell.cell_id === hoveredCellId}
                 isFocusTarget={cell.x === focusX && cell.y === focusY}
                 onSelect={onSelect}
-                onHover={onHover}
+                onHover={setHoveredCellId}
               />
             ))}
           </div>
         ))}
       </div>
 
-      <div className="text-[10px] uppercase tracking-widest text-ceres-dim">Sur ↓</div>
+      <div className="text-[10px] uppercase tracking-widest text-bone-600">Sur ↓</div>
     </div>
   );
 }

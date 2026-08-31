@@ -1,57 +1,123 @@
 @import "tailwindcss";
 
 /*
- * CERES - "industrial agricultural intelligence".
+ * CERES — Industrial Agricultural Intelligence.
  *
- * Fondo oscuro, verde como color de marca, superficies planas con bordes finos.
- * La estetica no se come la usabilidad: el contraste de los textos cumple
- * AA sobre el fondo, y los tres colores de riesgo son los mismos que usa
- * lib/presentation/risk.ts (definidos alli, no aqui, para que exista una sola
- * fuente).
+ * AUSTERIDAD CROMATICA: todo el cromo de la interfaz es acromatico. La UNICA
+ * saturacion en pantalla es la rampa semantica de riesgo, en el terreno y en la
+ * leyenda. Asi el color significa siempre lo mismo —riesgo— y nunca compite
+ * consigo mismo.
+ *
+ * Hasta la fase 6 el acento de marca y el verde de riesgo bajo eran el mismo
+ * hex (#22c55e): "activo" y "riesgo bajo" se veian igual. Sacar el color del
+ * cromo lo resuelve sin inventar un cuarto tono.
+ *
+ * Los neutros son calidos —tierra— y no frios: un gris azulado leeria como
+ * dashboard genérico, no como instrumento de campo.
+ *
+ * Los tres colores de riesgo se definen aqui Y en lib/presentation/risk.ts. El
+ * modulo TypeScript es la fuente de verdad; estos tokens existen para poder
+ * usarlos en clases de Tailwind.
  */
 
 @theme {
-  --color-ceres-bg: #0a0f0d;
-  --color-ceres-surface: #111815;
-  --color-ceres-elevated: #17211d;
-  --color-ceres-border: #22302a;
-  --color-ceres-border-strong: #2f4238;
+  /* Suelo: del fondo a los bordes. */
+  --color-soil-900: #0b0d0c;
+  --color-soil-850: #0f1211;
+  --color-soil-800: #141816;
+  --color-soil-700: #1e2422;
+  --color-soil-600: #2c3431;
+  --color-soil-500: #3d4844;
 
-  --color-ceres-text: #e6f0ea;
-  --color-ceres-muted: #8ba397;
-  --color-ceres-dim: #5f7469;
+  /* Hueso: del texto primario al terciario. El estado activo es hueso solido. */
+  --color-bone-100: #edeae3;
+  --color-bone-300: #c3c1ba;
+  --color-bone-400: #9a9a93;
+  --color-bone-600: #6a6e69;
 
-  --color-ceres-accent: #22c55e;
-  --color-ceres-accent-dim: #16a34a;
-
+  /* Rampa semantica. La unica saturacion de la interfaz. */
   --color-risk-low: #22c55e;
   --color-risk-medium: #eab308;
   --color-risk-high: #ef4444;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "Cascadia Mono", monospace;
+}
+
+html {
+  color-scheme: dark;
 }
 
 html,
 body {
-  background-color: var(--color-ceres-bg);
-  color: var(--color-ceres-text);
+  background-color: var(--color-soil-900);
+  color: var(--color-bone-100);
 }
 
 body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  /* El terreno ocupa la ventana: el documento no debe desplazarse. */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
-/* Los valores numericos van en monoespaciada y con cifras tabulares: en un
-   panel de metricas, que los digitos no bailen al cambiar de celda importa. */
+/*
+ * Datos en monoespaciada con cifras tabulares: en un panel de metricas, que los
+ * digitos no bailen al cambiar de celda no es un detalle estetico.
+ */
 .tabular {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * Etiquetas de instrumento: mono, versalitas, muy espaciadas. Es la textura que
+ * mas distingue esta interfaz de una plantilla, y solo se aplica a etiquetas
+ * cortas —nunca a texto corrido, donde el tracking amplio dificulta leer—.
+ */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-bone-600);
+}
+
 /* Foco visible siempre: la malla se recorre con teclado. */
 :focus-visible {
-  outline: 2px solid var(--color-ceres-accent);
+  outline: 2px solid var(--color-bone-100);
   outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/*
+ * Superficie flotante sobre el terreno.
+ *
+ * Un desenfoque leve, no glassmorphism: sobre una escena 3D que se mueve, el
+ * cristal esmerilado destruye la legibilidad. El fondo es casi opaco y el
+ * desenfoque solo suaviza lo que asoma por los bordes.
+ */
+.floating {
+  background-color: color-mix(in srgb, var(--color-soil-850) 92%, transparent);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--color-soil-600);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .floating {
+    background-color: var(--color-soil-850);
+    backdrop-filter: none;
+  }
+}
+
+/* Sin movimiento no esencial para quien lo ha pedido. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
