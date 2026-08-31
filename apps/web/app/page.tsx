@@ -22,7 +22,7 @@ import { CellInspector } from "@/components/cell-inspector/CellInspector";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { PlotSelector } from "@/components/dashboard/PlotSelector";
 import { StatusBar } from "@/components/dashboard/StatusBar";
-import { CellGrid } from "@/components/terrain/CellGrid";
+import { TerrainView } from "@/components/terrain/TerrainView";
 import { RiskLegend } from "@/components/terrain/RiskLegend";
 import { ViewModeSwitch } from "@/components/terrain/ViewModeSwitch";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -35,20 +35,20 @@ import { formatInteger } from "@/lib/presentation/format";
 import { useCeresStore } from "@/stores/useCeresStore";
 
 export default function DashboardPage() {
-  const {
-    selectedFarmId,
-    selectedPlotId,
-    selectedCropCycleId,
-    selectedCellId,
-    hoveredCellId,
-    viewMode,
-    selectFarm,
-    selectPlot,
-    selectCropCycle,
-    selectCell,
-    hoverCell,
-    setViewMode,
-  } = useCeresStore();
+  // Selectores individuales, uno por dato. Con `useCeresStore()` a secas la
+  // pagina se suscribia al store completo y se repintaba entera con cada
+  // cambio, incluido el hover. `hoveredCellId` ya no se lee aqui: vive dentro
+  // de TerrainView para que mover el raton no toque el resto de la pantalla.
+  const selectedFarmId = useCeresStore((state) => state.selectedFarmId);
+  const selectedPlotId = useCeresStore((state) => state.selectedPlotId);
+  const selectedCropCycleId = useCeresStore((state) => state.selectedCropCycleId);
+  const selectedCellId = useCeresStore((state) => state.selectedCellId);
+  const viewMode = useCeresStore((state) => state.viewMode);
+
+  const selectFarm = useCeresStore((state) => state.selectFarm);
+  const selectPlot = useCeresStore((state) => state.selectPlot);
+  const selectCropCycle = useCeresStore((state) => state.selectCropCycle);
+  const setViewMode = useCeresStore((state) => state.setViewMode);
 
   const health = useApiResource((signal) => ceresApi.health(signal), []);
   const farms = useApiResource((signal) => ceresApi.listFarms(signal), []);
@@ -175,17 +175,12 @@ export default function DashboardPage() {
             />
           )}
 
-          {overview.data && (
+          {overview.data && !overview.isLoading && (
             <div className="space-y-4">
-              <CellGrid
+              <TerrainView
                 cells={overview.data.cells}
                 gridWidth={overview.data.grid_width}
                 gridHeight={overview.data.grid_height}
-                viewMode={viewMode}
-                selectedCellId={selectedCellId}
-                hoveredCellId={hoveredCellId}
-                onSelect={selectCell}
-                onHover={hoverCell}
               />
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ceres-border pt-3">
                 <RiskLegend cells={overview.data.cells} viewMode={viewMode} />

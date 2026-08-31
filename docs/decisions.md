@@ -587,6 +587,105 @@ servidor. Perder diez minutos con eso es facil.
 
 ---
 
+## D-032 — Sin valor por defecto para la URL de la API
+
+**Que paso.** `client.ts` tenia `?? "http://localhost:8000"`. Parecia un defecto
+razonable y era una trampa: en esta maquina el 8000 lo ocupa otra aplicacion, asi
+que un `.env.local` ausente no daba un error de configuracion sino una
+conversacion silenciosa con el backend equivocado.
+
+**Decision.** No hay valor por defecto. `assertApiBaseUrl` valida que exista, que
+sea una URL y que use http(s); si no, lanza `ConfigurationError` con un mensaje
+que dice que falta y como arreglarlo. La comprobacion corre tambien en
+`next.config.ts`, porque `NEXT_PUBLIC_*` se hornea en el build: fallar ahi evita
+desplegar un frontend que apunta a ninguna parte.
+
+**Detalle que costo un test.** `resolveApiBaseUrl` tenia el entorno como
+parametro por defecto, asi que pasarle `undefined` activaba el valor del entorno
+y era imposible probar el caso "falta la variable". Se partio en dos:
+`assertApiBaseUrl(valor)` valida lo que le den, `resolveApiBaseUrl()` lee el
+entorno.
+
+**Y un detalle de orden.** La URL se resuelve FUERA del try/catch de `fetch`. Si
+se resolviera dentro, el ConfigurationError se convertiria en un error de red y
+volveriamos justo a la confusion que este cambio elimina.
+
+---
+
+## D-033 — `TerrainView`: el contenedor que aisla el hover
+
+**Decision.** Un componente entre `page.tsx` y `CellGrid` que lee el store y
+traduce a props.
+
+**Por que.** `page.tsx` hacia `const {...} = useCeresStore()`, que suscribe al
+store completo: cada celda que tocaba el cursor repintaba tambien el selector, el
+panel del lote y el Cell Inspector. Ahora la pagina usa selectores individuales y
+`hoveredCellId` solo lo lee `TerrainView`, asi que mover el raton no sale de la
+malla.
+
+**Lo medi antes de tocarlo:** 0,01 ms por hover. No era un problema en 2D —el
+`memo` de `CellSquare` lo absorbia—. Importa de cara a R3F, donde un re-render
+del arbol en cada movimiento compite con el bucle de render de la escena.
+
+**Efecto secundario util.** `TerrainView` es ahora el punto de sustitucion
+explicito de la fase 7: cambiar `CellGrid` por `TerrainCanvas` es cambiar una
+linea de ese archivo. `CellGrid` sigue sin importar nada de `stores/` ni de
+`lib/api/`.
+
+---
+
+## D-034 — La malla sigue el patron `grid` de ARIA, con roving tabindex
+
+**Que estaba mal.** `role="grid"` con 400 `gridcell` colgando directamente, sin
+`role="row"`. ARIA exige `grid > row > gridcell`; sin filas, `aria-rowindex` no
+significa nada. Y las 400 celdas estaban en el orden de tabulacion: cruzar la
+malla con teclado costaba 400 pulsaciones de Tab.
+
+**Ahora.** 20 filas de 20 celdas. Solo la celda enfocada tiene `tabIndex 0`; las
+flechas mueven el foco dentro de la malla, Home/End van a los extremos. Medido en
+el navegador: **7 paradas de Tab en toda la pagina**, frente a 407.
+
+Ademas `aria-selected` en lugar de `aria-pressed`: en un grid la celda es una
+casilla seleccionable, no un conmutador.
+
+**Senal no cromatica.** Verde, ambar y rojo son justo los tonos que confunde un
+daltonismo rojo-verde. El nivel de riesgo lleva ahora una trama superpuesta cuya
+densidad crece con la gravedad —liso, rayado suave, rayado marcado—, asi que se
+lee tambien en escala de grises. Solo en modo riesgo: en los modos continuos el
+valor es una rampa y la trama seria ruido.
+
+**Lo que NO cambia.** El modelo, los umbrales y los colores. Es una capa de
+lectura anadida, no una redefinicion del dominio.
+
+---
+
+## D-035 — ESLint de verdad, y lo que encontro
+
+**Que estaba mal.** `npm run lint` ejecutaba `next lint`, que Next 16 elimino:
+fallaba con "no such directory: .../lint" porque interpretaba `lint` como una
+ruta. El proyecto no tenia linter, asi que un `eslint-disable` escrito a mano no
+lo leia nadie.
+
+**Ahora.** ESLint 9 con config plana. `eslint-config-next` 16 ya la publica
+nativa, asi que no hace falta `FlatCompat` —que ademas fallaba con
+"Converting circular structure to JSON" al intentar usarlo—.
+
+**Lo que encontro en la primera pasada.** Dos `setState` sincronos dentro de
+efectos, que encadenan renders para llegar al mismo sitio. Ninguno era cosmetico:
+
+- `CellGrid` recortaba el foco con un efecto. Ahora se recorta al renderizar.
+- `useApiResource` guardaba `isLoading` en estado. Ahora se DERIVA: "lo que tengo
+  no corresponde a lo que quiero". De paso arregla que durante la carga se
+  devolvieran los datos del recurso anterior como si fueran los del nuevo.
+
+El linter tambien rechazo mutar una `ref` durante el render, asi que el fetcher
+se guarda desde un efecto declarado antes que el de la peticion —los efectos
+corren en orden de declaracion—.
+
+**Resultado.** 0 errores, 0 warnings, sin un solo `eslint-disable` en el codigo.
+
+---
+
 ## Relacionado
 
 - [architecture.md](architecture.md)

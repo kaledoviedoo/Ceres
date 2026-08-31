@@ -19,7 +19,7 @@ import { RiskBadge, Tag } from "@/components/ui/Badge";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Spinner } from "@/components/ui/Spinner";
 import { ceresApi } from "@/lib/api/endpoints";
-import { ApiError } from "@/lib/api/errors";
+import { describeError } from "@/lib/api/useApiResource";
 import {
   formatDateTime,
   formatFactorDelta,
@@ -56,7 +56,7 @@ export function PredictionPanel({ cellId, cropCycleId }: PredictionPanelProps) {
     try {
       setPrediction(await ceresApi.createPrediction({ cell_id: cellId, crop_cycle_id: cropCycleId }));
     } catch (cause) {
-      setError(cause instanceof ApiError ? cause.userMessage : "Error inesperado");
+      setError(describeError(cause));
     } finally {
       setIsRunning(false);
     }

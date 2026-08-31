@@ -5,7 +5,7 @@
  * Three Fiber en la fase 7: recibir celdas y emitir `cell_id` en hover y click.
  */
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -98,7 +98,9 @@ describe("CellGrid", () => {
 
     const cell = screen.getByTestId(`cell-${target.cell_code}`);
     expect(cell).toHaveAttribute("data-selected", "true");
-    expect(cell).toHaveAttribute("aria-pressed", "true");
+    // `aria-selected` y no `aria-pressed`: en un grid la celda es una casilla
+    // seleccionable, no un conmutador.
+    expect(cell).toHaveAttribute("aria-selected", "true");
   });
 
   it("cada celda es un botón, para poder recorrer la malla con teclado", () => {
@@ -107,6 +109,88 @@ describe("CellGrid", () => {
     for (const cell of screen.getAllByRole("gridcell").slice(0, 5)) {
       expect(cell.tagName).toBe("BUTTON");
     }
+  });
+
+  it("estructura ARIA grid > row > gridcell", () => {
+    // Un grid sin filas es ARIA inválido: los lectores de pantalla no pueden
+    // anunciar la posición de una celda si no existe la fila que la contiene.
+    renderGrid();
+
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(20);
+    for (const row of rows) {
+      expect(within(row).getAllByRole("gridcell")).toHaveLength(20);
+    }
+  });
+
+  it("solo una celda está en el orden de tabulación (roving tabindex)", () => {
+    // 400 paradas de tabulación harían la malla intransitable con teclado.
+    renderGrid();
+
+    const cells = screen.getAllByRole("gridcell");
+    const tabbable = cells.filter((cell) => cell.getAttribute("tabindex") === "0");
+
+    expect(tabbable).toHaveLength(1);
+    expect(cells.filter((c) => c.getAttribute("tabindex") === "-1")).toHaveLength(399);
+  });
+
+  it("las flechas mueven el foco por la malla", async () => {
+    const user = userEvent.setup();
+    renderGrid();
+
+    // Se entra por la esquina noroeste: (0, 19).
+    const entry = screen.getAllByRole("gridcell").find((c) => c.getAttribute("tabindex") === "0")!;
+    expect(entry.getAttribute("aria-label")).toContain("(0, 19)");
+
+    entry.focus();
+    await user.keyboard("{ArrowRight}");
+    const afterRight = screen
+      .getAllByRole("gridcell")
+      .find((c) => c.getAttribute("tabindex") === "0")!;
+    expect(afterRight.getAttribute("aria-label")).toContain("(1, 19)");
+
+    // El norte está arriba, así que bajar reduce y.
+    await user.keyboard("{ArrowDown}");
+    const afterDown = screen
+      .getAllByRole("gridcell")
+      .find((c) => c.getAttribute("tabindex") === "0")!;
+    expect(afterDown.getAttribute("aria-label")).toContain("(1, 18)");
+  });
+
+  it("el foco no se sale de la malla en los bordes", async () => {
+    const user = userEvent.setup();
+    renderGrid();
+
+    const entry = screen.getAllByRole("gridcell").find((c) => c.getAttribute("tabindex") === "0")!;
+    entry.focus();
+    await user.keyboard("{ArrowLeft}{ArrowLeft}{ArrowUp}{ArrowUp}");
+
+    const stillThere = screen
+      .getAllByRole("gridcell")
+      .find((c) => c.getAttribute("tabindex") === "0")!;
+    expect(stillThere.getAttribute("aria-label")).toContain("(0, 19)");
+  });
+
+  it("el riesgo no se comunica solo con el color", async () => {
+    // Verde, ámbar y rojo son justo los tonos que confunde un daltonismo
+    // rojo-verde: el nivel necesita una señal que no sea cromática.
+    const { overview } = renderGrid();
+    const high = overview.cells.find((c) => c.risk_level === "high")!;
+    const medium = overview.cells.find((c) => c.risk_level === "medium")!;
+    const low = overview.cells.find((c) => c.risk_level === "low")!;
+
+    const patternOf = (code: string) =>
+      screen.getByTestId(`cell-${code}`).style.backgroundImage;
+
+    expect(patternOf(high.cell_code)).toContain("repeating-linear-gradient");
+    expect(patternOf(medium.cell_code)).toContain("repeating-linear-gradient");
+    expect(patternOf(high.cell_code)).not.toBe(patternOf(medium.cell_code));
+    expect(patternOf(low.cell_code)).toBe("");
+
+    // Y el nivel viaja además en el texto que lee un lector de pantalla.
+    expect(screen.getByTestId(`cell-${high.cell_code}`).getAttribute("aria-label")).toContain(
+      "riesgo alto",
+    );
   });
 
   it("el tooltip de una celda trae sus métricas, no solo su nombre", () => {

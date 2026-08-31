@@ -12,7 +12,8 @@ export type ApiErrorKind =
   | "conflict" // 409: peticion valida pero incoherente con el estado
   | "validation" // 422: schema rechazado
   | "server" // 5xx
-  | "network"; // no hubo respuesta
+  | "network" // no hubo respuesta
+  | "config"; // la aplicacion no sabe a donde llamar
 
 export class ApiError extends Error {
   readonly kind: ApiErrorKind;
@@ -28,6 +29,8 @@ export class ApiError extends Error {
   /** Mensaje orientado a la persona que está mirando la pantalla. */
   get userMessage(): string {
     switch (this.kind) {
+      case "config":
+        return this.message;
       case "network":
         return "No se pudo contactar con la API de CERES. ¿Está FastAPI levantado?";
       case "not_found":

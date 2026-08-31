@@ -8,6 +8,9 @@ export default defineConfig({
     alias: { "@": resolve(__dirname, ".") },
   },
   test: {
+    // Sin esto, el cliente lanzaria ConfigurationError en cada test. Se fija
+    // aqui y no en un .env para que los tests no dependan de la maquina.
+    env: { NEXT_PUBLIC_API_BASE_URL: "http://localhost:8010" },
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
     globals: true,

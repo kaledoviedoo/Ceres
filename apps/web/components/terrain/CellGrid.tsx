@@ -13,9 +13,14 @@
  *
  * La correspondencia `GridCell ↔ cuadro` se mantiene por `cell_id`, no por
  * posición: en 3D el raycasting devolverá ese mismo identificador.
+ *
+ * Accesibilidad: la malla sigue el patrón `grid` de ARIA — `grid > row >
+ * gridcell` — con roving tabindex. Solo una celda está en el orden de Tab; las
+ * flechas mueven el foco dentro de la malla. Con 400 celdas la alternativa
+ * (400 paradas de tabulación) hace la pantalla inutilizable con teclado.
  */
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CellSquare } from "@/components/terrain/CellSquare";
 import { cellColor, metricRange, type ViewMode } from "@/lib/presentation/risk";
@@ -30,6 +35,12 @@ export interface CellGridProps {
   hoveredCellId: string | null;
   onSelect: (cellId: string) => void;
   onHover: (cellId: string | null) => void;
+}
+
+/** Posición dentro de la malla en coordenadas de dominio (x este, y norte). */
+interface Focus {
+  x: number;
+  y: number;
 }
 
 export function CellGrid({
@@ -60,6 +71,71 @@ export function CellGrid({
     });
   }, [cells, gridHeight]);
 
+  // --- Roving tabindex --------------------------------------------------------
+  // Solo la celda enfocada tiene tabIndex 0; el resto, -1. Entrar en la malla
+  // cuesta un Tab y moverse dentro son las flechas, como en una hoja de cálculo.
+  const [focus, setFocus] = useState<Focus>({ x: 0, y: gridHeight - 1 });
+  const gridRef = useRef<HTMLDivElement>(null);
+  // Solo se mueve el foco del navegador cuando el usuario navega con teclado.
+  // Sin esta guarda, cualquier repintado robaría el foco de donde estuviera.
+  const shouldRestoreFocus = useRef(false);
+
+  // Si la malla encoge, el foco puede quedar fuera de rango. Se recorta al
+  // renderizar en vez de sincronizarlo con un efecto: un `setState` dentro de
+  // un efecto provoca un render en cascada para llegar al mismo sitio.
+  const focusX = Math.min(focus.x, gridWidth - 1);
+  const focusY = Math.min(focus.y, gridHeight - 1);
+
+  useEffect(() => {
+    if (!shouldRestoreFocus.current) return;
+    shouldRestoreFocus.current = false;
+    gridRef.current
+      ?.querySelector<HTMLButtonElement>(`[data-x="${focusX}"][data-y="${focusY}"]`)
+      ?.focus();
+  }, [focusX, focusY]);
+
+  const moveFocus = useCallback(
+    (dx: number, dy: number) => {
+      shouldRestoreFocus.current = true;
+      setFocus((current) => ({
+        x: Math.min(gridWidth - 1, Math.max(0, current.x + dx)),
+        y: Math.min(gridHeight - 1, Math.max(0, current.y + dy)),
+      }));
+    },
+    [gridWidth, gridHeight],
+  );
+
+  const handleKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      // Enter y Espacio los gestiona el propio botón: no se interceptan.
+      const moves: Record<string, [number, number]> = {
+        // El norte está arriba, así que ArrowUp aumenta y.
+        ArrowUp: [0, 1],
+        ArrowDown: [0, -1],
+        ArrowLeft: [-1, 0],
+        ArrowRight: [1, 0],
+      };
+
+      const move = moves[event.key];
+      if (move) {
+        event.preventDefault();
+        moveFocus(move[0], move[1]);
+        return;
+      }
+
+      if (event.key === "Home" || event.key === "End") {
+        event.preventDefault();
+        shouldRestoreFocus.current = true;
+        // Con Ctrl, a la esquina de la malla; sin él, al extremo de la fila.
+        setFocus((current) => ({
+          x: event.key === "Home" ? 0 : gridWidth - 1,
+          y: event.ctrlKey ? (event.key === "Home" ? gridHeight - 1 : 0) : current.y,
+        }));
+      }
+    },
+    [gridWidth, gridHeight, moveFocus],
+  );
+
   return (
     <div className="flex flex-col items-center gap-2">
       <div className="flex w-full max-w-[680px] items-center justify-between text-[10px] uppercase tracking-widest text-ceres-dim">
@@ -78,28 +154,38 @@ export function CellGrid({
         la malla es un mapa, no un mosaico decorativo.
       */}
       <div
+        ref={gridRef}
         role="grid"
-        aria-label={`Malla del lote, ${gridWidth} por ${gridHeight} celdas de 1 m²`}
+        aria-label={`Malla del lote, ${gridWidth} por ${gridHeight} celdas de 1 m². Usa las flechas para recorrerla.`}
         aria-rowcount={gridHeight}
         aria-colcount={gridWidth}
-        className="grid w-full max-w-[680px] gap-px rounded border border-ceres-border-strong bg-ceres-border p-px"
-        style={{ gridTemplateColumns: `repeat(${gridWidth}, minmax(0, 1fr))` }}
+        className="w-full max-w-[680px] rounded border border-ceres-border-strong bg-ceres-border p-px"
+        onKeyDown={handleKeyDown}
         onMouseLeave={() => onHover(null)}
       >
-        {rows.map((row, rowIndex) =>
-          row.map((cell) => (
-            <CellSquare
-              key={cell.cell_id}
-              cell={cell}
-              color={cellColor(cell, viewMode, range)}
-              isSelected={cell.cell_id === selectedCellId}
-              isHovered={cell.cell_id === hoveredCellId}
-              rowIndex={rowIndex}
-              onSelect={onSelect}
-              onHover={onHover}
-            />
-          )),
-        )}
+        {rows.map((row, rowIndex) => (
+          <div
+            key={rowIndex}
+            role="row"
+            aria-rowindex={rowIndex + 1}
+            className="grid gap-px"
+            style={{ gridTemplateColumns: `repeat(${gridWidth}, minmax(0, 1fr))` }}
+          >
+            {row.map((cell) => (
+              <CellSquare
+                key={cell.cell_id}
+                cell={cell}
+                color={cellColor(cell, viewMode, range)}
+                viewMode={viewMode}
+                isSelected={cell.cell_id === selectedCellId}
+                isHovered={cell.cell_id === hoveredCellId}
+                isFocusTarget={cell.x === focusX && cell.y === focusY}
+                onSelect={onSelect}
+                onHover={onHover}
+              />
+            ))}
+          </div>
+        ))}
       </div>
 
       <div className="text-[10px] uppercase tracking-widest text-ceres-dim">Sur ↓</div>

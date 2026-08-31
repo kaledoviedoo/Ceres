@@ -11,6 +11,7 @@
 import { formatInteger, formatKg, formatPercent } from "@/lib/presentation/format";
 import {
   RISK_COLORS,
+  RISK_PATTERNS,
   metricRange,
   riskDistribution,
   type ViewMode,
@@ -28,10 +29,15 @@ export function RiskLegend({ cells, viewMode }: { cells: CellOverview[]; viewMod
       <div className="flex flex-wrap items-center gap-4">
         {LEVELS.map((level) => (
           <div key={level} className="flex items-center gap-2">
+            {/* Muestra la misma trama que la malla: la leyenda tiene que ser
+                legible con los mismos medios que el mapa. */}
             <span
               aria-hidden="true"
               className="h-3 w-3 rounded-sm"
-              style={{ backgroundColor: RISK_COLORS[level].fill }}
+              style={{
+                backgroundColor: RISK_COLORS[level].fill,
+                backgroundImage: RISK_PATTERNS[level],
+              }}
             />
             <span className="text-xs text-ceres-muted">
               {RISK_COLORS[level].label}

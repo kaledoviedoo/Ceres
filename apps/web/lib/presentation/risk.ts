@@ -27,6 +27,25 @@ export const RISK_COLORS: Record<RiskLevel, { fill: string; text: string; label:
 };
 
 /**
+ * Trama superpuesta al color, como señal NO cromática del nivel de riesgo.
+ *
+ * Verde, ámbar y rojo son precisamente los tonos que se confunden en un
+ * daltonismo rojo-verde, que afecta a alrededor del 8% de los hombres. Si el
+ * nivel se comunica solo con el color, para esas personas el mapa de riesgo no
+ * dice nada.
+ *
+ * La densidad crece con la gravedad —liso, rayado suave, rayado marcado— así
+ * que el nivel también se lee en escala de grises o impreso en blanco y negro.
+ * `undefined` en `low` deja el verde limpio: la ausencia de trama ya es señal.
+ */
+export const RISK_PATTERNS: Record<RiskLevel, string | undefined> = {
+  low: undefined,
+  medium:
+    "repeating-linear-gradient(45deg, rgba(0,0,0,0.28) 0 1.5px, transparent 1.5px 5px)",
+  high: "repeating-linear-gradient(45deg, rgba(0,0,0,0.42) 0 2.5px, transparent 2.5px 5px)",
+};
+
+/**
  * Rampa continua verde -> ámbar -> rojo.
  *
  * `t` va de 0 (mejor) a 1 (peor). Se interpola en RGB, que para tres paradas
