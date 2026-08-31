@@ -10,6 +10,13 @@ degradado de Photoshop, y la pendiente se DERIVA de la elevacion en lugar de
 sortearse aparte: asi el terreno es internamente coherente (donde la superficie
 sube rapido, la pendiente es alta).
 
+ESCENARIO SINTETICO DE ESTRES: ademas se inyecta una ZONA CRITICA localizada
+—una hondonada erosionada en el noroeste con suelo pobre y sanidad muy baja—
+cuyo unico proposito es que el dataset produzca celdas de `risk_level = high` y
+la visualizacion pueda ejercitar los tres niveles de riesgo. NO representa
+evidencia agronomica ni un fenomeno observado: es un caso de prueba dibujado a
+mano. Ver docs/synthetic-data.md.
+
 Convencion de ejes: x = 0 es oeste, y = 0 es sur.
 """
 
@@ -68,6 +75,46 @@ class TerrainProfile:
     #: Pendiente (grados) a partir de la cual se considera penalizacion maxima.
     slope_reference_deg: float = 15.0
 
+    # --- ZONA CRITICA (escenario sintetico de estres) ------------------------
+    # Foco localizado que empuja la sanidad y el suelo lo bastante abajo como
+    # para cruzar el umbral de riesgo alto. Existe para que la visualizacion
+    # pueda probar los tres niveles; no modela nada real.
+    #
+    # Se coloca dentro del area de estres del oeste, no en un punto arbitrario:
+    # asi la transicion low -> medium -> high es espacialmente continua y el
+    # mapa se lee como un foco que se agrava, no como un pegote.
+    #
+    # Poner los tres *_penalty a 0.0 desactiva la zona por completo.
+    critical_zone_center_x: float = 0.12
+    critical_zone_center_y: float = 0.72
+    #: Radio caracteristico. 0.10 sobre una malla de 20 => nucleo de ~2 celdas.
+    critical_zone_sigma: float = 0.10
+    #: Cuanto hunde la sanidad en el nucleo. Suficiente para llegar al clip.
+    critical_health_penalty: float = 0.75
+    #: Cuanto degrada el suelo en el nucleo.
+    critical_soil_penalty: float = 0.35
+    #: Profundidad de la hondonada, en metros. Genera pendiente en el borde y
+    #: hace que la zona se vea tambien en el relieve, no solo en el color.
+    critical_elevation_drop_m: float = 0.6
+
+
+def _gaussian_focus(
+    nx: np.ndarray,
+    ny: np.ndarray,
+    center_x: float,
+    center_y: float,
+    sigma: float,
+) -> np.ndarray:
+    """Campana gaussiana centrada en (center_x, center_y), con valores 0..1.
+
+    Se usa para los dos focos del terreno: el estres difuso del oeste y la zona
+    critica. Que ambos sean campanas es lo que hace que las transiciones sean
+    continuas y el mapa se lea como un degradado y no como parches.
+    """
+    return np.exp(
+        -(((nx - center_x) ** 2) + ((ny - center_y) ** 2)) / (2.0 * sigma**2)
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class CellFeatureGrid:
@@ -117,11 +164,23 @@ def generate_cell_features(
     nx = np.linspace(0.0, 1.0, width)[None, :] * np.ones((height, 1))
     ny = np.linspace(0.0, 1.0, height)[:, None] * np.ones((1, width))
 
-    # --- Elevacion: gradiente sur->norte + ondulacion suave --------------------
+    # --- Zona critica: escenario sintetico de estres ---------------------------
+    # Se calcula antes que nada porque hunde el terreno, y la pendiente se deriva
+    # de la elevacion ya deformada.
+    critical = _gaussian_focus(
+        nx,
+        ny,
+        profile.critical_zone_center_x,
+        profile.critical_zone_center_y,
+        profile.critical_zone_sigma,
+    )
+
+    # --- Elevacion: gradiente sur->norte + ondulacion suave + hondonada -------
     elevation = (
         profile.base_elevation_m
         + profile.north_rise_m * ny
         + profile.elevation_noise_m * noise_elev
+        - profile.critical_elevation_drop_m * critical
     )
 
     # --- Pendiente: derivada del propio terreno, no sorteada -------------------
@@ -130,23 +189,25 @@ def generate_cell_features(
     slope = np.clip(slope, 0.0, 90.0)
     slope_norm = np.clip(slope / profile.slope_reference_deg, 0.0, 1.0)
 
-    # --- Suelo: mejor hacia el este -------------------------------------------
-    soil = profile.soil_base + profile.soil_east_gain * nx + profile.soil_noise * noise_soil
+    # --- Suelo: mejor hacia el este, arrasado en la zona critica --------------
+    soil = (
+        profile.soil_base
+        + profile.soil_east_gain * nx
+        + profile.soil_noise * noise_soil
+        - profile.critical_soil_penalty * critical
+    )
     soil = np.clip(soil, 0.05, 0.98)
 
     # --- Sanidad: foco de estres en el oeste + castigo por pendiente ----------
-    stress = np.exp(
-        -(
-            (nx - profile.stress_center_x) ** 2
-            + (ny - profile.stress_center_y) ** 2
-        )
-        / (2.0 * profile.stress_sigma**2)
+    stress = _gaussian_focus(
+        nx, ny, profile.stress_center_x, profile.stress_center_y, profile.stress_sigma
     )
     health = (
         profile.health_base
         - profile.health_stress_penalty * stress
         - profile.health_slope_penalty * slope_norm
         + profile.health_noise * noise_health
+        - profile.critical_health_penalty * critical
     )
     health = np.clip(health, 0.05, 1.0)
 

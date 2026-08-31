@@ -105,8 +105,12 @@ def test_ranking_by_yield_is_coherent_with_the_cell_state(plot_a_cells, crop):
 
 
 def test_dataset_produces_the_three_risk_levels(predictions):
-    """Un dataset que solo produjera un nivel no serviria para probar la UI."""
+    """Los tres niveles, no dos.
+
+    Hasta la fase 4.6 el dataset no llegaba a `high` y esta asercion solo pedia
+    dos niveles. La zona critica sintetica cerro ese hueco; ver
+    tests/unit/test_dataset_integrity.py y docs/synthetic-data.md.
+    """
     levels = {result.risk_level for result in predictions}
 
-    assert RiskLevel.LOW in levels
-    assert len(levels) >= 2
+    assert levels == {RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH}
