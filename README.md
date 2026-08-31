@@ -33,6 +33,8 @@ ESTADO  ->  PREDICCION  ->  OBSERVACION  ->  COSECHA  ->  VALIDACION
 | 2 | Migraciones, seeds, dataset sintetico | ✅ |
 | 3 | Motor de prediccion `predict()` | ✅ |
 | 4 | Endpoints FastAPI | ✅ |
+| 4.5 | Integracion y verificacion contra Supabase real | ✅ |
+| 4.6 | Paridad Python/SQL, zona critica sintetica, idempotencia del seed | ✅ |
 | 5 | Frontend 2D (grid 20x20) | ⬜ siguiente |
 | 6 | Integracion Next.js ↔ FastAPI | ⬜ |
 | 7 | React Three Fiber | ⬜ |
