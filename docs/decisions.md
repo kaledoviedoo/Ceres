@@ -802,6 +802,102 @@ unidades de mundo.
 
 ---
 
+## D-041 — La reticula y el contorno de zona: de objeto a carta
+
+**Decision.** Las celdas pasan a estar **a ras** (`CELL_GAP = 0`) y sobre la
+superficie se dibujan dos capas nuevas: una **reticula** con el borde de cada
+celda —marcada cada cinco— y el **contorno cerrado** de la region en riesgo alto.
+
+**Por que.** Con separacion entre celdas, la parcela se leia como cuatrocientas
+piezas sueltas: un mosaico, no un terreno. A ras forman una superficie
+escalonada continua y el ojo lee relieve. El escalon entre vecinas sigue siendo
+real; no se interpola nada, porque el dato es discreto por celda de 1 m² y
+suavizarlo inventaria mediciones que no existen.
+
+El contorno resuelve un problema distinto: un manchon rojo dice "por aqui hay
+problema", pero no **donde empieza ni donde acaba**, que es la pregunta de quien
+tiene que ir al campo.
+
+**Que NO es.** Comparar el `risk_level` de dos celdas vecinas —valores que el
+motor ya decidio— no es una formula agronomica. Los umbrales siguen viviendo en
+`app/domain/units.py`.
+
+**Una sola fuente.** `zoneBorders()` calcula la frontera sin coordenadas de
+mundo. El relieve la convierte en segmentos de linea y la malla plana en sombras
+interiores. Dos implementaciones paralelas se habrian separado al primer cambio.
+
+---
+
+## D-042 — El contorno es de color hueso, no del color del nivel
+
+**Decision.** El contorno de la zona en riesgo alto se dibuja en hueso
+(`#edeae3`), no en rojo.
+
+**Por que.** El primer intento lo pinto del color del nivel que delimita, por
+coherencia con la austeridad cromatica. En pantalla resulto **invisible**: un
+contorno rojo sobre celdas rojas no separa nada, que es exactamente lo que un
+contorno tiene que hacer. La referencia perfila el fairway con una linea clara
+sobre el verde, por la misma razon.
+
+**No rompe la regla del color.** El contorno es una ANOTACION —dice donde
+mirar—, y las anotaciones son cromo. El color sigue significando riesgo; lo que
+dibuja el limite no es color, es una linea. Ademas, asi el limite se mantiene
+legible tambien en los modos continuos, donde la superficie es una rampa.
+
+---
+
+## D-043 — El cristal al 80 % es una medicion, no un gusto
+
+**Decision.** `.floating` pasa de 92 % a **80 %** de opacidad con
+`blur(24px) saturate(140%)`, y `.eyebrow` deja de usar `bone-600`.
+
+**Por que.** Hasta la fase 7 los paneles eran opacos al 92 %: el desenfoque no se
+veia y el cromo eran rectangulos grises sobre negro. El argumento contra el
+cristal —sobre una escena en movimiento puede destruir la legibilidad— era
+legitimo, pero la solucion correcta es un **suelo de contraste**, no eliminar el
+efecto.
+
+**El numero sale de medir.** El peor fondo posible bajo un panel es una celda en
+riesgo alto, rojo saturado, sin nada que la atenue:
+
+| Opacidad | Fondo efectivo | `bone-500` | `bone-400` |
+|---|---|---|---|
+| 72 % | `#4e201f` | **4,12** incumple | 4,78 |
+| 78 % | `#401d1c` | 4,53 | 5,26 |
+| **80 %** | `#3c1c1b` | **4,65** | **5,40** |
+
+La viñeta de la escena mejora mucho esos numeros, pero es un degradado y no
+cubre el centro de la pantalla: apoyar en ella un minimo de accesibilidad
+significaria que mover un panel la rompe sin que nadie se entere.
+
+**Regresion corregida de paso.** `bone-600` (#6a6e69) daba **3,63:1** sobre el
+panel e incumplia AA para texto pequeño. Era el color de `.eyebrow`, es decir, de
+la etiqueta de cada seccion de la interfaz. Ahora `bone-600` queda para filetes y
+separadores, nunca para texto.
+
+---
+
+## D-044 — El hover se marca con un perimetro, no elevando la celda
+
+**Decision.** La celda bajo el cursor —o bajo el foco del teclado— se resalta con
+un **contorno de hueso**, ademas de aclarar su color.
+
+**Por que.** El plan preveia elevarla, pero la reticula va clavada a la altura de
+cada celda: al levantar una, sus lineas se quedarian atras. Y aclarar el color
+compite con la propia rampa —una celda roja aclarada sigue pareciendo roja—,
+mientras que un perimetro se distingue sobre cualquier nivel y desde cualquier
+angulo de camara.
+
+Resuelve ademas el problema del teclado sin mover la camara: enfocar una celda
+con las flechas la perfila en la escena. Un `lerp` de camara en cada pulsacion
+habria sido mareante.
+
+**Coste.** Geometria de ocho vertices reservada una vez y reescrita en el sitio.
+Medido: **0,30 ms por movimiento de puntero**, el 1,8 % del presupuesto de un
+fotograma.
+
+---
+
 ## Relacionado
 
 - [architecture.md](architecture.md)

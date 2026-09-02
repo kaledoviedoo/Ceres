@@ -73,8 +73,10 @@ export function CameraRig({ extent, handle, onMove, reducedMotion }: CameraRigPr
       // Sin desplazamiento lateral: el objeto de análisis es el lote y sacarlo
       // del encuadre no aporta nada. Rotar y acercarse, sí.
       enablePan={false}
-      minDistance={extent * 0.5}
-      maxDistance={extent * 3}
+      // Ajustados al encuadre cerrado: alejarse mas de esto devuelve el lote
+      // al vacio negro que el reencuadre vino a eliminar.
+      minDistance={extent * 0.42}
+      maxDistance={extent * 2}
       // Nunca por debajo del horizonte: no hay nada que ver bajo la parcela.
       maxPolarAngle={Math.PI * 0.46}
       minPolarAngle={Math.PI * 0.08}

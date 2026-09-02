@@ -234,9 +234,9 @@ def test_missing_crop_cycle_returns_404(client, cell_id):
     assert "CropCycle" in response.json()["detail"]
 
 
-def test_cell_from_another_plot_returns_409(client, cell_in_plot_b, crop_cycle_id):
+def test_cell_from_another_plot_returns_409(client, cell_in_other_plot, crop_cycle_id):
     """No tiene sentido predecir una celda de Plot B bajo un ciclo de Plot A."""
-    response = create(client, cell_in_plot_b["id"], crop_cycle_id)
+    response = create(client, cell_in_other_plot["id"], crop_cycle_id)
 
     assert response.status_code == 409
     assert "lote" in response.json()["detail"]

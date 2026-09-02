@@ -7,9 +7,20 @@
  * necesitan por props y no saben que existe una API; el store solo guarda qué
  * está seleccionado.
  *
- * El terreno ocupa la ventana entera y el resto flota encima. No es una
- * decisión estética: el objeto de análisis de CERES es la parcela, y meterla en
- * una tarjeta dentro de una rejilla de paneles la convierte en un widget más.
+ * COMPOSICION
+ * El terreno ocupa la ventana entera y el cromo flota sobre él, superponiéndose
+ * a sus bordes. No es una decisión estética: el objeto de análisis de CERES es
+ * la parcela, y meterla en una tarjeta dentro de una rejilla de paneles la
+ * convierte en un widget más.
+ *
+ * Los controles se agrupan por el tipo de decisión que representan, no por
+ * dónde caben:
+ *
+ *   oeste        qué lote miras
+ *   sur-oeste    qué significan los colores y cuánta superficie ocupa cada nivel
+ *   sur-centro   qué métrica pinta el terreno
+ *   sur-este     desde dónde lo miras: orientación, zoom, relieve o planta
+ *   este         qué hay dentro de lo que has seleccionado
  *
  * Flujo:
  *
@@ -21,9 +32,11 @@
 import { useCallback, useEffect, useMemo } from "react";
 
 import { CellInspector } from "@/components/cell-inspector/CellInspector";
+import { BottomStrips } from "@/components/dashboard/BottomStrips";
 import { PlotSelector } from "@/components/dashboard/PlotSelector";
 import { TopStrip } from "@/components/dashboard/TopStrip";
 import { RiskLegend } from "@/components/terrain/RiskLegend";
+import { SurfaceStyleSwitch } from "@/components/terrain/SurfaceStyleSwitch";
 import { TerrainModeSwitch } from "@/components/terrain/TerrainModeSwitch";
 import { TerrainView } from "@/components/terrain/TerrainView";
 import { ViewModeSwitch } from "@/components/terrain/ViewModeSwitch";
@@ -31,6 +44,7 @@ import { ErrorState } from "@/components/ui/ErrorState";
 import { Spinner } from "@/components/ui/Spinner";
 import { ceresApi } from "@/lib/api/endpoints";
 import { useApiResource } from "@/lib/api/useApiResource";
+import { ElevationField, gridElevationSource } from "@/lib/terrain/elevation";
 import { joinTerrainCells } from "@/lib/terrain/types";
 import { useCeresStore } from "@/stores/useCeresStore";
 
@@ -42,6 +56,7 @@ export default function CeresPage() {
   const selectedCellId = useCeresStore((state) => state.selectedCellId);
   const viewMode = useCeresStore((state) => state.viewMode);
   const terrainMode = useCeresStore((state) => state.terrainMode);
+  const surfaceStyle = useCeresStore((state) => state.surfaceStyle);
 
   const selectFarm = useCeresStore((state) => state.selectFarm);
   const selectPlot = useCeresStore((state) => state.selectPlot);
@@ -49,6 +64,7 @@ export default function CeresPage() {
   const clearSelection = useCeresStore((state) => state.clearSelection);
   const setViewMode = useCeresStore((state) => state.setViewMode);
   const setTerrainMode = useCeresStore((state) => state.setTerrainMode);
+  const setSurfaceStyle = useCeresStore((state) => state.setSurfaceStyle);
 
   const health = useApiResource((signal) => ceresApi.health(signal), []);
   const farms = useApiResource((signal) => ceresApi.listFarms(signal), []);
@@ -112,6 +128,23 @@ export default function CeresPage() {
     return joinTerrainCells(terrain.data.cells, overview.data.cells);
   }, [terrain.data, overview.data]);
 
+  /**
+   * LA RAMA GEOMETRICA nace aquí, y solo recibe elevación.
+   *
+   * Se construye en la página y no dentro del canvas porque hay dos consumidores
+   * con necesidades distintas: la escena la usa para la malla y el inspector para
+   * declarar la procedencia. Derivarla dos veces sería tener dos verdades sobre
+   * el mismo terreno.
+   *
+   * El día que entre un DEM, esta es la única línea que cambia.
+   */
+  const field = useMemo(() => {
+    if (!overview.data || terrainCells.length === 0) return null;
+    return new ElevationField(
+      gridElevationSource(terrainCells, overview.data.grid_width, overview.data.grid_height),
+    );
+  }, [terrainCells, overview.data]);
+
   const selectedOverview = useMemo(
     () => overview.data?.cells.find((item) => item.cell_id === selectedCellId) ?? null,
     [overview.data, selectedCellId],
@@ -126,8 +159,19 @@ export default function CeresPage() {
     overview.reload();
   }, [terrain, overview]);
 
+  // El panel crece al abrir una celda. Que ocupe menos mientras no hay nada
+  // abierto devuelve al terreno los píxeles que el resumen no necesita, y hace
+  // que seleccionar se note.
+  // La vista Campo no pinta ningún dato en la superficie: allí el selector de
+  // métrica y la leyenda no gobiernan nada. La malla plana siempre pinta dato.
+  const showsData = terrainMode === "2d" || surfaceStyle === "pro";
+
+  const inspectorWidth = cell.data
+    ? "lg:w-[20rem] xl:w-[22rem] 2xl:w-[24rem]"
+    : "lg:w-[17rem] xl:w-[18.5rem]";
+
   return (
-    <div className="relative h-dvh w-full overflow-hidden bg-soil-900">
+    <div className="relative h-dvh w-full overflow-hidden bg-canvas">
       {/* El terreno ocupa la ventana; todo lo demás flota encima. */}
       <div className="absolute inset-0">
         {isLoadingTerrain && (
@@ -146,6 +190,7 @@ export default function CeresPage() {
 
         {!isLoadingTerrain && !terrainError && terrainCells.length > 0 && overview.data && (
           <TerrainView
+            field={field}
             cells={terrainCells}
             gridWidth={overview.data.grid_width}
             gridHeight={overview.data.grid_height}
@@ -154,10 +199,7 @@ export default function CeresPage() {
       </div>
 
       <TopStrip
-        health={health.data}
-        healthError={health.error}
         farms={farms.data ?? []}
-        farm={farm.data}
         plot={plot}
         cropCycles={cropCycles.data ?? []}
         selectedFarmId={selectedFarmId}
@@ -166,8 +208,23 @@ export default function CeresPage() {
         onSelectCropCycle={selectCropCycle}
       />
 
-      {/* Lotes, en el borde del terreno. */}
-      <div className="absolute left-5 top-1/2 z-20 -translate-y-1/2">
+      {/* Qué le preguntas al terreno. Centrado arriba porque es la decisión de
+          mayor nivel: cambia el sentido de todo lo demás que hay en pantalla.
+          Solo en relieve; la vista en planta no tiene materiales.
+
+          Centrado SOLO cuando cabe. El breadcrumb llega a 478 px, así que el
+          centro no queda libre hasta ~1116 px de ancho: por debajo de `xl` el
+          conmutador se alinea al este, en la misma fila. Centrarlo igualmente
+          lo dejaba encima del nombre del ciclo. */}
+      {terrainMode === "3d" && (
+        <div className="pointer-events-auto absolute right-6 top-4 z-40 xl:left-1/2 xl:right-auto xl:-translate-x-1/2">
+          <SurfaceStyleSwitch value={surfaceStyle} onChange={setSurfaceStyle} />
+        </div>
+      )}
+
+      {/* Lote, anclado al oeste. En pantallas estrechas baja bajo la franja,
+          donde no compite con el panel inferior. */}
+      <div className="absolute left-6 top-[5.75rem] z-20">
         <PlotSelector
           plots={farm.data?.plots ?? []}
           selectedPlotId={selectedPlotId}
@@ -175,23 +232,71 @@ export default function CeresPage() {
         />
       </div>
 
-      {/* Leyenda: abajo a la izquierda, fuera del camino del terreno. */}
-      <div className="absolute bottom-5 left-5 z-20">
-        <RiskLegend cells={overview.data?.cells ?? []} viewMode={viewMode} />
-      </div>
+      {/* Leyenda. Se retira por debajo de `lg`: ahí el inspector pasa a hoja
+          inferior y ocupa justo esta esquina. */}
+      {/* Estado del lote: las tres preguntas que se hacen antes de abrir una
+          celda. Reemplaza a la leyenda de esquina y al bloque de estado que
+          estaba arriba a la derecha. */}
+      <BottomStrips
+        cells={overview.data?.cells ?? []}
+        health={health.data}
+        healthError={health.error}
+      />
 
-      {/* Modos: centrados abajo, la acción más repetida después de seleccionar. */}
-      <div className="absolute bottom-5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2">
-        <ViewModeSwitch value={viewMode} onChange={setViewMode} />
+      {/* La rampa continua solo en los modos que la usan: en riesgo, la clave de
+          color ya la da la franja del pie, y repetirla sería ruido. En la vista
+          Campo no hay color de dato que explicar. */}
+      {showsData && viewMode !== "risk" && (
+        <div className="absolute bottom-[8.5rem] right-6 z-20 hidden lg:block">
+          <RiskLegend cells={overview.data?.cells ?? []} viewMode={viewMode} />
+        </div>
+      )}
+
+      {/* Qué métrica pinta el terreno. Centrado abajo: es la decisión que más se
+          repite después de seleccionar una celda.
+
+          Por debajo de `md` sube una fila más: con tres opciones mide 242 px y
+          a 640 de ancho chocaba con el conmutador Relieve/Planta. Apilados, cada
+          uno conserva su sitio.
+
+          Por debajo de `lg` sube para librar la hoja inferior. Degradar la
+          composición en pantallas estrechas es legítimo; dejar un control bajo
+          un panel, donde no se puede pulsar, no lo es. */}
+      {showsData && (
+        <div className="absolute bottom-[calc(45dvh+5rem)] left-1/2 z-20 -translate-x-1/2 md:bottom-[calc(45dvh+1.5rem)] lg:bottom-[8.5rem]">
+          <ViewModeSwitch value={viewMode} onChange={setViewMode} />
+        </div>
+      )}
+
+      {/* Cómo se mira el terreno. Bajo la rosa de los vientos y el zoom, que
+          monta `TerrainCanvas`: los tres son controles de punto de vista. */}
+      {/* Relieve o planta. Al oeste, bajo el compás y el zoom: los tres
+          responden a "desde dónde miras el terreno". Estaba al este y ahí se
+          solapaba con el inspector, que ocupa esa columna entera. */}
+      <div className="absolute bottom-[calc(45dvh+1.5rem)] left-6 z-30 lg:bottom-[8.5rem]">
         <TerrainModeSwitch value={terrainMode} onChange={setTerrainMode} />
       </div>
 
-      {/* Inspector. */}
-      <aside className="floating absolute right-5 top-24 z-20 max-h-[calc(100dvh-8rem)] w-[22rem] overflow-y-auto rounded-xl p-4">
+      {/* Inspector. Columna al este en escritorio; hoja inferior por debajo de
+          `lg`, donde una columna de 20 rem se comería el terreno entero.
+
+          El alto máximo descuenta la franja superior Y las del pie: sin ese
+          descuento, un inspector con histórico crecía por encima del bloque
+          del modelo y lo tapaba. */}
+      {/* El desplazamiento vive DENTRO, no en el panel. El canto de luz del
+          cristal es un pseudoelemento anclado al panel: si el panel fuera el que
+          desplaza, el canto superior se iria de la vista al bajar. */}
+      {/* El tope de altura va en `calc()` a propósito: ver nota en el CSS
+          emitido. `max-h-[45dvh]` a secas no genera regla. */}
+      <aside
+        className={`panel absolute inset-x-3 bottom-3 z-20 max-h-[calc(45dvh)] overflow-hidden rounded-2xl lg:inset-x-auto lg:bottom-auto lg:right-6 lg:top-[5.75rem] lg:max-h-[calc(100dvh-16rem)] ${inspectorWidth}`}
+      >
+        <div className="max-h-[calc(45dvh)] overflow-y-auto p-4 lg:max-h-[calc(100dvh-16rem)] lg:p-5">
         <CellInspector
           cell={cell.data}
           overview={selectedOverview}
           cells={overview.data?.cells ?? []}
+          field={field}
           plot={plot}
           cropCycleId={selectedCropCycleId}
           isLoading={cell.isLoading}
@@ -199,6 +304,7 @@ export default function CeresPage() {
           onRetry={cell.reload}
           onClear={clearSelection}
         />
+        </div>
       </aside>
 
       {/* Lo que cambia por selección, anunciado a quien no lo ve. */}

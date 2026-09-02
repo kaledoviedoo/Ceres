@@ -45,30 +45,69 @@ export const RISK_PATTERNS: Record<RiskLevel, string | undefined> = {
   high: "repeating-linear-gradient(45deg, rgba(0,0,0,0.42) 0 2.5px, transparent 2.5px 5px)",
 };
 
+/** Una parada de color de una rampa: dónde cae y en qué RGB. */
+interface Stop {
+  at: number;
+  rgb: readonly [number, number, number];
+}
+
 /**
- * Rampa continua verde -> ámbar -> rojo.
+ * Rampa de PERDIDA: verde -> ámbar -> rojo.
  *
- * `t` va de 0 (mejor) a 1 (peor). Se interpola en RGB, que para tres paradas
- * tan separadas es suficiente y no necesita una librería de color.
+ * Es la misma escala semántica del riesgo, así que usa los mismos tres tonos:
+ * poca pérdida es verde, mucha es roja.
  */
-function ramp(t: number): string {
+const LOSS_STOPS: readonly Stop[] = [
+  { at: 0.0, rgb: [34, 197, 94] },
+  { at: 0.5, rgb: [234, 179, 8] },
+  { at: 1.0, rgb: [239, 68, 68] },
+];
+
+/**
+ * Rampa de RENDIMIENTO: rojo -> ámbar -> verde.
+ *
+ * Los mismos tres tonos del riesgo, pero al revés: en rendimiento, más es mejor,
+ * así que el verde está en el extremo alto y el rojo en el bajo. `t` va de 0
+ * (peor) a 1 (mejor).
+ *
+ * Tres tonos y no cuatro. Un cuarto color —azul en el extremo bueno— separaba
+ * mejor esta escala de la de pérdida, pero metía en la paleta un tono que no
+ * significa nada en el resto de la interfaz. Verde, ámbar y rojo son el
+ * vocabulario que ya entiende quien mira este mapa; ampliarlo obliga a aprender
+ * y solo se justifica si resuelve algo que no se pueda resolver con la leyenda.
+ */
+const YIELD_STOPS: readonly Stop[] = [
+  { at: 0.0, rgb: [239, 68, 68] },
+  { at: 0.5, rgb: [234, 179, 8] },
+  { at: 1.0, rgb: [34, 197, 94] },
+];
+
+/**
+ * Interpola una rampa en RGB.
+ *
+ * Para paradas tan separadas, interpolar en RGB es suficiente y no necesita una
+ * librería de color.
+ */
+function ramp(t: number, stops: readonly Stop[]): string {
   const clamped = Math.min(1, Math.max(0, t));
-  const stops = [
-    { at: 0.0, rgb: [34, 197, 94] }, // verde
-    { at: 0.5, rgb: [234, 179, 8] }, // ámbar
-    { at: 1.0, rgb: [239, 68, 68] }, // rojo
-  ] as const;
 
-  const upperIndex = clamped <= stops[1].at ? 1 : 2;
-  const lower = stops[upperIndex - 1]!;
-  const upper = stops[upperIndex]!;
-  const span = upper.at - lower.at;
-  const local = span === 0 ? 0 : (clamped - lower.at) / span;
+  let upper = 1;
+  while (upper < stops.length - 1 && clamped > stops[upper]!.at) upper += 1;
 
-  const channel = (i: number) =>
-    Math.round(lower.rgb[i]! + (upper.rgb[i]! - lower.rgb[i]!) * local);
+  const lo = stops[upper - 1]!;
+  const hi = stops[upper]!;
+  const span = hi.at - lo.at;
+  const local = span === 0 ? 0 : (clamped - lo.at) / span;
 
+  const channel = (i: number) => Math.round(lo.rgb[i]! + (hi.rgb[i]! - lo.rgb[i]!) * local);
   return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
+}
+
+/** Extremos de cada rampa, para pintar la leyenda sin duplicar los tonos. */
+export function rampCss(mode: ViewMode): string {
+  const stops = mode === "yield" ? YIELD_STOPS : LOSS_STOPS;
+  const paradas = stops.map((s) => `rgb(${s.rgb.join(", ")}) ${s.at * 100}%`).join(", ");
+  return `linear-gradient(to right, ${paradas})`;
 }
 
 /** Rango de una métrica en el lote, para normalizar la rampa de color. */
@@ -99,13 +138,15 @@ export function cellColor(cell: CellOverview, mode: ViewMode, range: MetricRange
   if (mode === "risk") return RISK_COLORS[cell.risk_level].fill;
 
   const span = range.max - range.min;
-  if (span === 0) return ramp(0.5);
 
   if (mode === "yield") {
-    // Más rendimiento es mejor: se invierte para que el verde sea lo alto.
-    return ramp(1 - (cell.projected_yield_kg - range.min) / span);
+    // En rendimiento, `t` = 1 es lo mejor: la rampa ya está orientada así.
+    if (span === 0) return ramp(0.5, YIELD_STOPS);
+    return ramp((cell.projected_yield_kg - range.min) / span, YIELD_STOPS);
   }
-  return ramp((cell.estimated_loss_percentage - range.min) / span);
+
+  if (span === 0) return ramp(0.5, LOSS_STOPS);
+  return ramp((cell.estimated_loss_percentage - range.min) / span, LOSS_STOPS);
 }
 
 /** Cuántas celdas hay en cada nivel. Alimenta la leyenda. */

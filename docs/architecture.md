@@ -119,12 +119,37 @@ la escena 3D devuelve ese mismo identificador que devolvia un click en 2D.
 
 ### Como se representa el terreno
 
-Dos mallas instanciadas —el bloque de suelo y la losa analitica encima—, dos
-llamadas de dibujo para 400 celdas. La escena se dibuja bajo demanda
-(`frameloop="demand"`): parada no consume nada.
+Cuatro capas, cuatro llamadas de dibujo para 400 celdas:
 
-El hover no pasa por React: vive en referencias y escribe dos colores de
-instancia. Medido, 0,007 ms por movimiento del raton.
+| Capa | Que es | Que aporta |
+|---|---|---|
+| `blocks` | malla instanciada | el volumen de suelo, con la altura de cada celda |
+| `surface` | malla instanciada | la losa analitica encima, pintada con la metrica activa |
+| `lattice` | `lineSegments` | el borde de cada celda, marcado cada cinco |
+| `outline` | `Line` de drei | el perimetro cerrado de la region en riesgo alto |
+
+Las dos primeras hacen que la parcela se lea como un objeto fisico con una capa
+analitica encima. Las dos ultimas son las que la vuelven un **instrumento**: sin
+reticula no se localiza una celda concreta, y sin contorno el foco critico es un
+manchon que no dice donde empieza. Ver D-041 y D-042.
+
+Las celdas van **a ras** (`CELL_GAP = 0`): forman una superficie escalonada
+continua en vez de un mosaico de piezas. El escalon entre vecinas es real, no
+interpolado —el dato es discreto por celda de 1 m²—.
+
+`lib/terrain/lattice.ts` construye las dos capas de linea con funciones puras que
+devuelven arrays planos, comprobables sin montar una escena. `zoneBorders()` es
+la **unica** fuente de la frontera de zona: el relieve la convierte en segmentos
+y la malla plana en sombras interiores, asi que las dos vistas no pueden contar
+cosas distintas.
+
+La escena se dibuja bajo demanda (`frameloop="demand"`): parada no consume nada.
+La unica animacion que pide fotogramas es la interpolacion de color al cambiar de
+metrica, y se detiene sola en `t >= 1`.
+
+El hover no pasa por React: vive en referencias, escribe dos colores de instancia
+y reescribe los ocho vertices del contorno de celda. Medido, **0,30 ms por
+movimiento del raton**: el 1,8 % del presupuesto de un fotograma.
 
 Un canvas de WebGL no es accesible, asi que la malla existe tambien como DOM
 real —`AccessibleCellLayer`, invisible y sin capturar el puntero— con roving

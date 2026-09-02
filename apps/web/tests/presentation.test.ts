@@ -43,13 +43,47 @@ describe("colores de riesgo", () => {
   });
 
   it("en modo rendimiento, más kilos es más verde", () => {
+    // Misma paleta que el riesgo pero invertida: en rendimiento más es mejor.
     const cells = buildOverview().cells;
     const range = metricRange(cells, "yield");
     const best = cells.find((c) => c.projected_yield_kg === range.max)!;
     const worst = cells.find((c) => c.projected_yield_kg === range.min)!;
 
+    // Mismos tonos que el riesgo; la rampa los devuelve en `rgb()` porque
+    // interpola, mientras que los niveles discretos salen en hex.
     expect(cellColor(best, "yield", range)).toBe("rgb(34, 197, 94)");
     expect(cellColor(worst, "yield", range)).toBe("rgb(239, 68, 68)");
+  });
+
+  it("rendimiento y pérdida son la misma escala en sentidos opuestos", () => {
+    // Comparten paleta a propósito: verde es siempre "bien" y rojo "mal". Lo que
+    // cambia es qué extremo del dato es cuál, y de eso avisa la leyenda.
+    const cells = buildOverview().cells;
+    const yieldRange = metricRange(cells, "yield");
+    const lossRange = metricRange(cells, "loss");
+
+    const mejorRendimiento = cells.find((c) => c.projected_yield_kg === yieldRange.max)!;
+    const menorPerdida = cells.find((c) => c.estimated_loss_percentage === lossRange.min)!;
+
+    expect(cellColor(mejorRendimiento, "yield", yieldRange)).toBe("rgb(34, 197, 94)");
+    expect(cellColor(menorPerdida, "loss", lossRange)).toBe("rgb(34, 197, 94)");
+  });
+
+  it("la rampa de rendimiento no repite color entre rendimientos distintos", () => {
+    // Es lo que hace legible un mapa de calor: si la rampa volviera sobre sus
+    // pasos, dos rendimientos distintos compartirían color y el mapa mentiría.
+    //
+    // Las celdas se construyen aquí en vez de salir del fixture: el fixture
+    // tiene pocos valores distintos, así que probar con él mediría el fixture y
+    // no la rampa.
+    const range = { min: 0, max: 10 };
+    const escalon = (kg: number) =>
+      cellColor({ ...buildOverview().cells[0]!, projected_yield_kg: kg }, "yield", range);
+
+    const colores = new Set<string>();
+    for (let i = 0; i <= 24; i += 1) colores.add(escalon((i / 24) * 10));
+
+    expect(colores.size).toBe(25);
   });
 
   it("en modo pérdida, más porcentaje es más rojo", () => {

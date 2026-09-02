@@ -17,27 +17,49 @@
 
 import { CellGrid } from "@/components/terrain/CellGrid";
 import { TerrainCanvas } from "@/components/terrain/TerrainCanvas";
+import type { ElevationField } from "@/lib/terrain/elevation";
 import type { TerrainCell } from "@/lib/terrain/types";
 import { useCeresStore } from "@/stores/useCeresStore";
 
 interface TerrainViewProps {
+  /** Rama geométrica. `null` mientras no hay datos. */
+  field: ElevationField | null;
   cells: TerrainCell[];
   gridWidth: number;
   gridHeight: number;
 }
 
-export function TerrainView({ cells, gridWidth, gridHeight }: TerrainViewProps) {
+export function TerrainView({ field, cells, gridWidth, gridHeight }: TerrainViewProps) {
   const viewMode = useCeresStore((state) => state.viewMode);
   const terrainMode = useCeresStore((state) => state.terrainMode);
+  const surfaceStyle = useCeresStore((state) => state.surfaceStyle);
   const selectedCellId = useCeresStore((state) => state.selectedCellId);
   const selectCell = useCeresStore((state) => state.selectCell);
 
   if (terrainMode === "2d") {
+    // La malla se centra en el hueco que queda LIBRE, no en el lienzo entero.
+    // Centrada sobre todo el ancho, sus dos ultimas columnas y la etiqueta
+    // "Este" quedaban bajo el inspector, y el borde inferior bajo las franjas
+    // del pie: informacion tapada, que es justo lo que el panel no debe hacer.
+    //
+    // El hueco se reserva SIEMPRE, haya celda abierta o no. Reservarlo solo al
+    // seleccionar haria saltar la malla entera bajo el cursor en el momento de
+    // hacer clic.
     return (
-      <div className="flex h-full w-full items-center justify-center overflow-auto p-8">
-        {/* Ancho explícito: dentro de un flex centrado, el `w-full` de la malla
-            no tendría de qué agarrarse y se colapsaría a su contenido. */}
-        <div className="w-full max-w-[680px] shrink-0">
+      <div className="flex h-full w-full items-center justify-center overflow-auto p-8 pt-[4.5rem] pb-[calc(45dvh+8rem)] md:pb-[calc(45dvh+5.5rem)] lg:pb-[11rem] lg:pr-[22rem] xl:pr-[24rem] 2xl:pr-[26rem]">
+        {/* Ancho explicito: dentro de un flex centrado, el `w-full` de la malla
+            no tendria de que agarrarse y se colapsaria a su contenido.
+
+            El alto de la malla lo dicta su ancho —las celdas son cuadradas—, asi
+            que el ancho es lo unico que se puede acotar. Se acota por la altura
+            que queda libre despues de reservar franja, conmutadores y hoja —y
+            descontando las etiquetas de orientacion, que van fuera de la malla
+            pero dentro del bloque—. La reserva crece por debajo de `md`,
+            donde los dos conmutadores se apilan en dos filas; si no, en pantalla
+            estrecha la malla salia por arriba de la ventana y esa parte no se
+            podia recuperar ni desplazando (un hijo centrado que desborda recorta
+            por el borde de inicio). */}
+        <div className="w-full max-w-[min(680px,calc(55dvh-14.5rem))] shrink-0 md:max-w-[min(680px,calc(55dvh-12rem))] lg:max-w-[min(680px,calc(100dvh-17.5rem))]">
         <CellGrid
           cells={cells}
           gridWidth={gridWidth}
@@ -51,12 +73,17 @@ export function TerrainView({ cells, gridWidth, gridHeight }: TerrainViewProps) 
     );
   }
 
+  // Sin campo de elevación no hay geometría que construir.
+  if (!field) return null;
+
   return (
     <TerrainCanvas
+      field={field}
       cells={cells}
       gridWidth={gridWidth}
       gridHeight={gridHeight}
       viewMode={viewMode}
+      surfaceStyle={surfaceStyle}
       selectedCellId={selectedCellId}
       onSelect={selectCell}
     />

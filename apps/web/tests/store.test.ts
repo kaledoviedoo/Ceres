@@ -84,6 +84,9 @@ describe("store de interfaz", () => {
       "selectedCropCycleId",
       "selectedFarmId",
       "selectedPlotId",
+      // Cómo se lee el terreno es una preferencia de interfaz, no un dato: dice
+      // qué se pinta, no qué vale.
+      "surfaceStyle",
       "terrainMode",
       "viewMode",
     ]);

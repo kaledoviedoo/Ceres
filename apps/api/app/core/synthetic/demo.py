@@ -213,10 +213,18 @@ def build_demo_dataset(
     grid_cells: list[dict[str, Any]] = []
     feature_grids = {}
 
-    plot_definitions = (
-        ("A", "Plot A", 0.0),
-        ("B", "Plot B", PLOT_SEPARATION_M + grid_width * CELL_SIZE_M),
-    )
+    # UN SOLO LOTE.
+    #
+    # Habia un Plot B sin ciclo de cultivo, pensado como demostracion de que
+    # `CropCycle` y `Plot` son entidades separadas: un lote puede existir sin
+    # nada sembrado. La idea es correcta, pero en la interfaz se traducia en un
+    # selector con una opcion que al pulsarla no mostraba nada, y eso no se lee
+    # como un modelo de datos bien pensado: se lee como un fallo.
+    #
+    # La separacion sigue demostrada donde corresponde —en el esquema, en las
+    # claves foraneas y en los tests—, que es donde se comprueba un modelo. Y el
+    # dataset se queda con la mitad de celdas para el mismo valor demostrativo.
+    plot_definitions = (("A", "Plot A", 0.0),)
 
     for plot_index, (plot_code, plot_name, east_offset_m) in enumerate(plot_definitions):
         plot_id = demo_uuid("plot", plot_code)

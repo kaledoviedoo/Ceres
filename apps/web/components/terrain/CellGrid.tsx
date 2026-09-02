@@ -27,6 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CellSquare } from "@/components/terrain/CellSquare";
 import { cellColor, metricRange, type ViewMode } from "@/lib/presentation/risk";
+import { zoneBorders } from "@/lib/terrain/analysis";
 import type { CellOverview } from "@/lib/types/api";
 
 export interface CellGridProps {
@@ -55,6 +56,10 @@ export function CellGrid({
   // El hover es efímero y solo le importa a esta vista: estado local, no store.
   const [hoveredCellId, setHoveredCellId] = useState<string | null>(null);
   const range = useMemo(() => metricRange(cells, viewMode), [cells, viewMode]);
+
+  // Misma frontera que dibuja el relieve. El objeto por celda se reparte por
+  // referencia estable: el `memo` de CellSquare depende de que no cambie.
+  const borders = useMemo(() => zoneBorders(cells), [cells]);
 
   // La API devuelve las celdas ordenadas de sur a norte (y creciente), pero en
   // pantalla el norte va arriba. Se invierten las filas al pintar en vez de
@@ -139,7 +144,7 @@ export function CellGrid({
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <div className="flex w-full max-w-[680px] items-center justify-between text-[10px] uppercase tracking-widest text-bone-600">
+      <div className="flex w-full max-w-[680px] items-center justify-between text-[10px] uppercase tracking-widest text-muted">
         <span>Oeste</span>
         <span>Norte ↑</span>
         <span>Este</span>
@@ -160,7 +165,7 @@ export function CellGrid({
         aria-label={`Malla del lote, ${gridWidth} por ${gridHeight} celdas de 1 m². Usa las flechas para recorrerla.`}
         aria-rowcount={gridHeight}
         aria-colcount={gridWidth}
-        className="w-full max-w-[680px] rounded border border-soil-600 bg-soil-700 p-px"
+        className="w-full max-w-[680px] rounded border border-line bg-line-soft p-px"
         onKeyDown={handleKeyDown}
         onMouseLeave={() => setHoveredCellId(null)}
       >
@@ -181,6 +186,7 @@ export function CellGrid({
                 isSelected={cell.cell_id === selectedCellId}
                 isHovered={cell.cell_id === hoveredCellId}
                 isFocusTarget={cell.x === focusX && cell.y === focusY}
+                zone={borders.get(`${cell.x},${cell.y}`)}
                 onSelect={onSelect}
                 onHover={setHoveredCellId}
               />
@@ -189,7 +195,7 @@ export function CellGrid({
         ))}
       </div>
 
-      <div className="text-[10px] uppercase tracking-widest text-bone-600">Sur ↓</div>
+      <div className="text-[10px] uppercase tracking-widest text-muted">Sur ↓</div>
     </div>
   );
 }

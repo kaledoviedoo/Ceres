@@ -1,131 +1,147 @@
 /**
- * Geometría del terreno: de datos de celda a posiciones en la escena.
+ * TerrainGeometry: de campo de elevación a malla de Three.js.
  *
- * Todo lo que hay aquí es PRESENTACIÓN. Convierte coordenadas de malla y metros
- * sobre el nivel del mar en unidades de mundo 3D. No calcula rendimiento, ni
- * pérdida, ni riesgo, ni ninguna otra cosa que le corresponda al motor.
+ *     ElevationSource → ElevationField → [TerrainGeometry] → Three.js / R3F
  *
- * Convención de ejes, heredada del dominio:
+ * LA FIRMA ES LA GARANTIA. Estas funciones reciben un `ElevationField` y nada
+ * más. No hay ningún parámetro por el que pueda entrar un `risk_level`, un
+ * rendimiento ni una celda, así que es imposible —no por disciplina, sino por
+ * construcción— que una métrica agrícola acabe deformando el terreno.
  *
- *     x del dato  → +X del mundo   (0 = oeste)
- *     y del dato  → −Z del mundo   (0 = sur, así que el norte queda hacia −Z)
- *     elevación   → +Y del mundo
- *
- * La inversión de Z existe porque en Three.js la cámara mira por defecto hacia
- * −Z: con esta convención, la vista inicial deja el norte al fondo y el oeste a
- * la izquierda, igual que en la malla 2D y que en un mapa.
+ * Lo que el análisis puede hacer sobre esta malla es pintarla. Nunca moverla.
  */
 
-import type { CellSummary } from "@/lib/types/api";
+import { BufferAttribute, BufferGeometry, PlaneGeometry } from "three";
 
-/** Lado de una celda en unidades de mundo. 1 celda = 1 m² = 1 unidad. */
-export const CELL_SIZE = 1;
+import { CELL_SIZE, gridToWorld, worldToGrid } from "@/lib/terrain/coords";
+import type { ElevationField } from "@/lib/terrain/elevation";
 
 /**
- * Separación entre celdas.
+ * Subdivisiones por celda.
  *
- * Muy pequeña a propósito: lo bastante para que se distinga la retícula, no
- * tanto como para que el terreno se lea como cuatrocientas columnas sueltas. La
- * parcela tiene que verse como UNA superficie con relieve.
+ * Cuatro, y el número sale de una medición: con ocho, la malla tenía 51.200
+ * triángulos y el raycast del hover —que los recorre en lineal— costaba 2,26 ms
+ * por movimiento, el 13,5 % del presupuesto de un fotograma. Cuatro deja 12.800.
+ *
+ * No se pierde relieve al bajar: el campo tiene una resolución efectiva de unos
+ * 5 m, así que subdividir por debajo del metro ya solo interpola una curva que
+ * era suave. Subdividir más añade triángulos, no información.
  */
-export const CELL_GAP = 0.02;
+export const SEGMENTS_PER_CELL = 4;
 
 /**
- * Exageración vertical, en unidades de mundo para todo el rango de elevación
- * del lote.
+ * Grosor del canto de tierra bajo el terreno.
  *
- * El terreno real varía 3,01 m sobre 20 × 20 m (σ = 0,63 m). A escala 1:1 el
- * relieve —incluida la hondonada de la zona crítica sintética— sería casi
- * invisible desde una cámara que abarca el lote entero. Se exagera para que la
- * forma se lea, del mismo modo que un mapa topográfico exagera el perfil.
- *
- * NO altera ningún dato: la elevación real sigue mostrándose en metros en el
- * inspector. Esto solo decide cuántos píxeles ocupa esa diferencia.
+ * Fino a propósito. Un zócalo profundo lee como un bloque extraído del suelo, y
+ * lo que interesa es una superficie de campo ligeramente levantada, con el canto
+ * justo para que el borde no parezca una lámina de papel.
  */
-export const VERTICAL_EXAGGERATION = 1.5;
+export const SKIRT_DEPTH = 0.32;
 
 /**
- * Grosor del bloque bajo la celda más baja.
+ * La malla del terreno.
  *
- * Es lo que convierte la parcela en un volumen: el canto que se ve al orbitar
- * es la pared de tierra de una muestra extraída del campo. Con una lámina fina,
- * el terreno sería un mapa flotando en el vacío.
- *
- * Grueso respecto a la exageración vertical, para que el relieve se lea como
- * ondulación de una superficie y no como barras de un gráfico.
+ * Un plano subdividido cuyos vértices se desplazan en Y según el campo. Se
+ * recalculan las normales: sin eso, la iluminación seguiría creyendo que es un
+ * plano liso y el relieve no se vería en absoluto.
  */
-export const BASE_THICKNESS = 2.6;
+export function buildTerrainMesh(
+  field: ElevationField,
+  gridWidth: number,
+  gridHeight: number,
+): BufferGeometry {
+  const worldWidth = gridWidth * CELL_SIZE;
+  const worldHeight = gridHeight * CELL_SIZE;
 
-/** Rango de elevación de un lote, en metros sobre el nivel del mar. */
-export interface ElevationRange {
-  min: number;
-  max: number;
-}
+  const geo = new PlaneGeometry(
+    worldWidth,
+    worldHeight,
+    gridWidth * SEGMENTS_PER_CELL,
+    gridHeight * SEGMENTS_PER_CELL,
+  );
+  // El plano nace en XY; el terreno vive en XZ con la altura en +Y.
+  geo.rotateX(-Math.PI / 2);
 
-export function elevationRange(cells: Pick<CellSummary, "elevation_m">[]): ElevationRange {
-  if (cells.length === 0) return { min: 0, max: 1 };
-
-  let min = Infinity;
-  let max = -Infinity;
-  for (const cell of cells) {
-    if (cell.elevation_m < min) min = cell.elevation_m;
-    if (cell.elevation_m > max) max = cell.elevation_m;
+  const position = geo.attributes.position!;
+  for (let i = 0; i < position.count; i += 1) {
+    const [gx, gy] = worldToGrid(position.getX(i), position.getZ(i), gridWidth, gridHeight);
+    position.setY(i, field.heightAt(gx, gy));
   }
-  return { min, max };
+  position.needsUpdate = true;
+  geo.computeVertexNormals();
+  return geo;
 }
 
 /**
- * Altura del bloque de una celda, en unidades de mundo.
+ * El canto de tierra bajo el campo.
  *
- * La elevación se normaliza dentro del propio lote —no contra una escala
- * absoluta— porque lo que interesa leer es el relieve relativo de ESTA parcela.
- * Un lote perfectamente plano da todas las alturas iguales en vez de una
- * división por cero.
+ * UN SOLO RECORRIDO DEL PERIMETRO. Construir los cuatro lados por separado, cada
+ * uno con su sentido de giro, hacía que `computeVertexNormals` dedujera unas
+ * caras hacia fuera y otras hacia dentro: en pantalla se veía tierra en un lado
+ * y negro en los otros tres. Recorriendo el borde como un anillo cerrado, todas
+ * heredan la misma orientación.
  */
-export function cellHeight(elevationM: number, range: ElevationRange): number {
-  const span = range.max - range.min;
-  const normalized = span === 0 ? 0.5 : (elevationM - range.min) / span;
-  return BASE_THICKNESS + normalized * VERTICAL_EXAGGERATION;
-}
+export function buildSkirt(
+  field: ElevationField,
+  gridWidth: number,
+  gridHeight: number,
+): BufferGeometry {
+  const perTramo = Math.max(gridWidth, gridHeight) * 2;
+  const base = -SKIRT_DEPTH;
 
-/** Centro del lote en coordenadas de malla, para orbitar alrededor de él. */
-export function gridCenter(gridWidth: number, gridHeight: number): [number, number] {
-  return [(gridWidth - 1) / 2, (gridHeight - 1) / 2];
+  const esquinas: [number, number][] = [
+    [-0.5, -0.5],
+    [gridWidth - 0.5, -0.5],
+    [gridWidth - 0.5, gridHeight - 0.5],
+    [-0.5, gridHeight - 0.5],
+  ];
+
+  const anillo: [number, number][] = [];
+  for (let lado = 0; lado < 4; lado += 1) {
+    const a = esquinas[lado]!;
+    const b = esquinas[(lado + 1) % 4]!;
+    for (let s = 0; s < perTramo; s += 1) {
+      const t = s / perTramo;
+      anillo.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    }
+  }
+
+  const positions: number[] = [];
+  for (let i = 0; i < anillo.length; i += 1) {
+    const a = anillo[i]!;
+    const b = anillo[(i + 1) % anillo.length]!;
+
+    const [ax, az] = gridToWorld(a[0], a[1], gridWidth, gridHeight);
+    const [bx, bz] = gridToWorld(b[0], b[1], gridWidth, gridHeight);
+    const ay = field.heightAt(a[0], a[1]);
+    const by = field.heightAt(b[0], b[1]);
+
+    positions.push(ax, ay, az, bx, by, bz, bx, base, bz);
+    positions.push(ax, ay, az, bx, base, bz, ax, base, az);
+  }
+
+  const geo = new BufferGeometry();
+  geo.setAttribute("position", new BufferAttribute(new Float32Array(positions), 3));
+  geo.computeVertexNormals();
+  return geo;
 }
 
 /**
- * Posición del centro del bloque de una celda.
+ * Proyecta una polilínea de coordenadas de malla sobre la superficie.
  *
- * Se devuelve el CENTRO y no la base porque un `boxGeometry` de Three.js está
- * centrado en su origen: para que todos los bloques apoyen en el mismo plano,
- * cada uno se sube la mitad de su altura.
+ * Lo usan tanto las curvas de nivel —que son elevación— como el contorno de la
+ * zona de riesgo —que es análisis—. La proyección es geometría pura: coloca a la
+ * altura del terreno lo que le den, sin preguntar de dónde viene.
  */
-export function cellPosition(
-  x: number,
-  y: number,
-  height: number,
+export function drapeOnTerrain(
+  points: [number, number][],
+  field: ElevationField,
   gridWidth: number,
   gridHeight: number,
-): [number, number, number] {
-  const [centerX, centerY] = gridCenter(gridWidth, gridHeight);
-  const pitch = CELL_SIZE + CELL_GAP;
-
-  return [(x - centerX) * pitch, height / 2, -(y - centerY) * pitch];
-}
-
-/** Punto sobre la cara superior de una celda, para anclar marcadores. */
-export function cellTop(
-  x: number,
-  y: number,
-  height: number,
-  gridWidth: number,
-  gridHeight: number,
-): [number, number, number] {
-  const [worldX, , worldZ] = cellPosition(x, y, height, gridWidth, gridHeight);
-  return [worldX, height, worldZ];
-}
-
-/** Lado del lote en unidades de mundo. Fija los límites de zoom de la cámara. */
-export function plotExtent(gridWidth: number, gridHeight: number): number {
-  return Math.max(gridWidth, gridHeight) * (CELL_SIZE + CELL_GAP);
+  offset: number,
+): [number, number, number][] {
+  return points.map(([gx, gy]) => {
+    const [wx, wz] = gridToWorld(gx, gy, gridWidth, gridHeight);
+    return [wx, field.heightAt(gx, gy) + offset, wz] as [number, number, number];
+  });
 }

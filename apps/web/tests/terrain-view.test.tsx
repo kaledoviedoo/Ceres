@@ -14,6 +14,7 @@ import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { ElevationField, gridElevationSource } from "@/lib/terrain/elevation";
 import { TerrainView } from "@/components/terrain/TerrainView";
 import { useCeresStore } from "@/stores/useCeresStore";
 import { buildTerrainCells } from "./fixtures";
@@ -38,7 +39,10 @@ const initial = useCeresStore.getState();
 
 function renderTerrain() {
   const cells = buildTerrainCells();
-  const view = render(<TerrainView cells={cells} gridWidth={20} gridHeight={20} />);
+  // El campo de elevación se construye desde las mismas celdas, igual que en la
+  // página: la vista solo lo reparte, no lo deriva.
+  const campo = new ElevationField(gridElevationSource(cells, 20, 20));
+  const view = render(<TerrainView field={campo} cells={cells} gridWidth={20} gridHeight={20} />);
   return { cells, view };
 }
 
@@ -77,7 +81,8 @@ describe("TerrainView", () => {
       useCeresStore.setState(initial, true);
       useCeresStore.getState().setTerrainMode("2d");
     });
-    render(<TerrainView cells={cells} gridWidth={20} gridHeight={20} />);
+    const campo = new ElevationField(gridElevationSource(cells, 20, 20));
+    render(<TerrainView field={campo} cells={cells} gridWidth={20} gridHeight={20} />);
 
     await user.click(screen.getByTestId(`cell-${cells[7]!.cell_code}`));
     expect(useCeresStore.getState().selectedCellId).toBe(desdeElCanvas);

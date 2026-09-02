@@ -14,7 +14,11 @@ import { memo } from "react";
 
 import { formatKg, formatPercent, formatScore } from "@/lib/presentation/format";
 import { RISK_COLORS, RISK_PATTERNS, type ViewMode } from "@/lib/presentation/risk";
+import type { ZoneBorders } from "@/lib/terrain/analysis";
 import type { CellOverview } from "@/lib/types/api";
+
+/** Grosor del contorno de zona, en píxeles. */
+const ZONE_WIDTH = 2;
 
 interface CellSquareProps {
   cell: CellOverview;
@@ -23,6 +27,8 @@ interface CellSquareProps {
   isSelected: boolean;
   isHovered: boolean;
   isFocusTarget: boolean;
+  /** Lados de esta celda que son frontera de la zona en riesgo alto. */
+  zone?: ZoneBorders;
   onSelect: (cellId: string) => void;
   onHover: (cellId: string | null) => void;
 }
@@ -34,11 +40,12 @@ function CellSquareComponent({
   isSelected,
   isHovered,
   isFocusTarget,
+  zone,
   onSelect,
   onHover,
 }: CellSquareProps) {
-  // El tooltip nativo evita montar 400 popovers en el DOM. En 3D lo sustituirá
-  // un panel flotante, pero el dato que muestra será el mismo.
+  // El tooltip nativo evita montar 400 popovers en el DOM. En 3D lo sustituye
+  // un panel flotante, pero el dato que muestra es el mismo.
   const description = [
     cell.cell_code,
     `(${cell.x}, ${cell.y})`,
@@ -53,6 +60,22 @@ function CellSquareComponent({
   // modos continuos el valor es una rampa y la trama sería ruido.
   const pattern = viewMode === "risk" ? RISK_PATTERNS[cell.risk_level] : undefined;
 
+  // Contorno de zona, con la misma frontera y el mismo color que en relieve.
+  // Hueso y no rojo: sobre celdas rojas, un borde rojo no separa nada.
+  const shadows: string[] = [];
+  if (zone) {
+    const edge = "#edeae3";
+    if (zone.north) shadows.push(`inset 0 ${ZONE_WIDTH}px 0 ${edge}`);
+    if (zone.south) shadows.push(`inset 0 -${ZONE_WIDTH}px 0 ${edge}`);
+    if (zone.west) shadows.push(`inset ${ZONE_WIDTH}px 0 0 ${edge}`);
+    if (zone.east) shadows.push(`inset -${ZONE_WIDTH}px 0 0 ${edge}`);
+  }
+  // El anillo de selección va por box-shadow para no alterar el tamaño del
+  // cuadro y no descuadrar la malla. Anillo oscuro con halo claro: sobre una
+  // celda saturada, un anillo claro a secas se pierde.
+  if (isSelected) shadows.push("0 0 0 2px #edeae3", "0 0 0 4px #0b0d0c");
+  else if (isHovered) shadows.push("0 0 0 1px #edeae3");
+
   return (
     <button
       type="button"
@@ -66,6 +89,7 @@ function CellSquareComponent({
       tabIndex={isFocusTarget ? 0 : -1}
       data-testid={`cell-${cell.cell_code}`}
       data-risk={cell.risk_level}
+      data-zone={zone ? "high-border" : undefined}
       data-x={cell.x}
       data-y={cell.y}
       data-selected={isSelected || undefined}
@@ -76,13 +100,7 @@ function CellSquareComponent({
       style={{
         backgroundColor: color,
         backgroundImage: pattern,
-        // El anillo de selección va por box-shadow para no alterar el tamaño
-        // del cuadro y no descuadrar la malla.
-        boxShadow: isSelected
-          ? "0 0 0 2px #edeae3, 0 0 0 4px #0b0d0c"
-          : isHovered
-            ? "0 0 0 1px #edeae3"
-            : undefined,
+        boxShadow: shadows.length > 0 ? shadows.join(", ") : undefined,
         zIndex: isSelected ? 20 : undefined,
       }}
     />

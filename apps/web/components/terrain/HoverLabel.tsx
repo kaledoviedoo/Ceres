@@ -63,10 +63,10 @@ export function HoverLabel({ handle }: { handle: RefObject<HoverLabelHandle | nu
     <div
       ref={rootRef}
       aria-hidden="true"
-      className="floating pointer-events-none fixed left-0 top-0 z-30 rounded-md px-2.5 py-1.5 opacity-0 transition-opacity duration-100"
+      className="floating pointer-events-none fixed left-0 top-0 z-30 rounded-xl px-3 py-2 opacity-0 transition-opacity duration-100"
     >
-      <span ref={codeRef} className="tabular block text-xs text-bone-100" />
-      <span ref={metricRef} className="tabular block text-[11px] text-bone-400" />
+      <span ref={codeRef} className="tabular block text-xs text-ink" />
+      <span ref={metricRef} className="tabular block text-[11px] text-muted" />
       <span ref={levelRef} className="eyebrow block" />
     </div>
   );

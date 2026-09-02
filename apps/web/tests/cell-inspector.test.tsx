@@ -19,6 +19,9 @@ function renderInspector(props: Partial<Parameters<typeof CellInspector>[0]> = {
       cell={cellDetail}
       overview={cellOverview}
       cells={[cellOverview]}
+      // Sin campo de elevación: la nota de procedencia es opcional y su
+      // ausencia no debe romper la ficha.
+      field={null}
       plot={farmDetail.plots[0]!}
       cropCycleId={CYCLE_ID}
       isLoading={false}
@@ -81,18 +84,22 @@ describe("contenido", () => {
     renderInspector();
 
     for (const label of [
+      "Latitud",
+      "Longitud",
+      "Elevación",
       "Pendiente",
       "Calidad de suelo",
       "Densidad de siembra",
       "Sanidad",
-      "Rendimiento proyectado",
-      "Cajas proyectadas",
       "Pérdida estimada",
       "Risk score",
-      "Nivel de riesgo",
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
+
+    // El nivel se muestra como insignia y no como fila, pero sigue anunciandose
+    // con su contexto: "Bajo" a secas no dice bajo que.
+    expect(screen.getByText(/nivel de riesgo:/i)).toBeInTheDocument();
   });
 
   it("distingue el estado guardado de la estimación no guardada", () => {
@@ -100,8 +107,11 @@ describe("contenido", () => {
     // poder separar lo que se midió de lo que se estimó.
     renderInspector();
 
-    expect(screen.getByText(/estado del terreno/i)).toBeInTheDocument();
-    expect(screen.getByText(/estimación actual · sin guardar/i)).toBeInTheDocument();
+    // Lo MEDIDO y lo ESTIMADO llevan bloque propio y nota de origen.
+    expect(screen.getByText(/condición del terreno/i)).toBeInTheDocument();
+    expect(screen.getByText(/rendimiento estimado/i)).toBeInTheDocument();
+    expect(screen.getByText("Medido")).toBeInTheDocument();
+    expect(screen.getAllByText(/sin guardar/i).length).toBeGreaterThan(0);
   });
 });
 
@@ -121,7 +131,12 @@ describe("predicción contra la API", () => {
       expect(screen.getByText(/predicción guardada/i)).toBeInTheDocument();
     });
 
-    const [url, init] = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    // Se busca la llamada POST, no la primera: el inspector tambien pide el
+    // historico con un GET, y atarse al orden haria el test fragil.
+    const llamadas = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    const post = llamadas.find(([, init]) => (init as RequestInit | undefined)?.method === "POST");
+    expect(post).toBeDefined();
+    const [url, init] = post!;
     expect(String(url)).toContain("/api/v1/predictions");
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({
       cell_id: CELL_ID,
@@ -179,10 +194,12 @@ describe("fidelidad con el backend", () => {
     expect(screen.getByText("2,65 pl/m²")).toBeInTheDocument();
 
     // Estimación (overview): 11.9634 kg, 2 cajas, 9.18 %, score 0.1492.
-    expect(screen.getByText("11,96 kg")).toBeInTheDocument();
+    // El rendimiento aparece dos veces a proposito: como cifra titular y como
+    // posicion dentro del reparto del lote.
+    expect(screen.getAllByText("11,96 kg").length).toBeGreaterThan(0);
     expect(screen.getByText("9,18 %")).toBeInTheDocument();
     expect(screen.getByText("0,1492")).toBeInTheDocument();
-    // El nivel se muestra dos veces a proposito: en la cabecera y en la fila.
-    expect(screen.getAllByText("Bajo")).toHaveLength(2);
+    // Una sola vez: la insignia de la cabecera. La fila duplicada se retiro.
+    expect(screen.getAllByText("Bajo")).toHaveLength(1);
   });
 });

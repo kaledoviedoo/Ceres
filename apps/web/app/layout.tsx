@@ -36,7 +36,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="es" className={`${plexSans.variable} ${plexMono.variable}`}>
-      <body className="h-dvh overflow-hidden bg-soil-900 text-bone-100 antialiased">
+      <body className="h-dvh overflow-hidden bg-canvas text-ink antialiased">
         {children}
       </body>
     </html>

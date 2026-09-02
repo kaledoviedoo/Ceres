@@ -61,13 +61,16 @@ def dataset():
 
 
 def test_grid_is_four_hundred_cells_per_plot(dataset):
+    # Un solo lote: el segundo existia sin ciclo de cultivo y en la interfaz era
+    # una opcion que no mostraba nada. Los invariantes de coherencia entre lotes
+    # siguen probados, con un lote que crean los propios tests.
     plots = dataset.table("plots").rows
     cells = dataset.table("grid_cells").rows
 
-    assert len(plots) == 2
+    assert len(plots) == 1
     for plot in plots:
         assert sum(1 for c in cells if c["plot_id"] == plot["id"]) == 400
-    assert len(cells) == 800
+    assert len(cells) == 400
 
 
 def test_observation_count_is_stable(dataset):

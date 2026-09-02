@@ -51,8 +51,8 @@ def test_get_farm_includes_its_plots(client, farm_id):
     assert response.status_code == 200
     farm = response.json()
     assert farm["name"] == "CERES Demo Farm"
-    assert len(farm["plots"]) == 2
-    assert {plot["code"] for plot in farm["plots"]} == {"A", "B"}
+    assert len(farm["plots"]) == 1
+    assert {plot["code"] for plot in farm["plots"]} == {"A"}
 
 
 def test_get_missing_farm_returns_404(client):

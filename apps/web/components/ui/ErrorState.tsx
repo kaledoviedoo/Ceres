@@ -16,12 +16,12 @@ export function ErrorState({ message, onRetry }: ErrorStateProps) {
       role="alert"
       className="rounded-md border border-risk-high/40 bg-risk-high/10 px-4 py-3"
     >
-      <p className="text-sm text-bone-100">{message}</p>
+      <p className="text-sm text-ink">{message}</p>
       {onRetry && (
         <button
           type="button"
           onClick={onRetry}
-          className="mt-2 rounded border border-soil-600 px-3 py-1 text-xs text-bone-100 transition-colors hover:bg-soil-700"
+          className="mt-2 rounded border border-line px-3 py-1 text-xs text-ink transition-colors hover:bg-line-soft"
         >
           Reintentar
         </button>

@@ -1,39 +1,47 @@
 @import "tailwindcss";
 
 /*
- * CERES — Industrial Agricultural Intelligence.
+ * CERES — carta de campo.
  *
- * AUSTERIDAD CROMATICA: todo el cromo de la interfaz es acromatico. La UNICA
- * saturacion en pantalla es la rampa semantica de riesgo, en el terreno y en la
- * leyenda. Asi el color significa siempre lo mismo —riesgo— y nunca compite
- * consigo mismo.
+ * TEMA OSCURO, y el desvio por el claro dejo una leccion util: los tokens tienen
+ * nombres semanticos —`canvas`, `surface`, `ink`, `muted`, `line`— y no de color.
+ * Cambiar todo el tema es cambiar diez valores aqui; con nombres como "bone" o
+ * "soil" habria que reescribir cada archivo que los usa.
  *
- * Hasta la fase 6 el acento de marca y el verde de riesgo bajo eran el mismo
- * hex (#22c55e): "activo" y "riesgo bajo" se veian igual. Sacar el color del
- * cromo lo resuelve sin inventar un cuarto tono.
+ * AUSTERIDAD CROMATICA: el cromo es acromatico. La UNICA saturacion en pantalla
+ * es la rampa semantica —riesgo, rendimiento, perdida—. Si algo tiene color,
+ * habla del cultivo.
  *
  * Los neutros son calidos —tierra— y no frios: un gris azulado leeria como
- * dashboard genérico, no como instrumento de campo.
- *
- * Los tres colores de riesgo se definen aqui Y en lib/presentation/risk.ts. El
- * modulo TypeScript es la fuente de verdad; estos tokens existen para poder
- * usarlos en clases de Tailwind.
+ * panel de administracion, no como instrumento de campo.
  */
 
 @theme {
-  /* Suelo: del fondo a los bordes. */
-  --color-soil-900: #0b0d0c;
-  --color-soil-850: #0f1211;
-  --color-soil-800: #141816;
-  --color-soil-700: #1e2422;
-  --color-soil-600: #2c3431;
-  --color-soil-500: #3d4844;
+  /* Superficies, de la mas profunda a la mas elevada. */
+  --color-canvas: #0b0d0c;
+  --color-surface: #121614;
+  --color-surface-2: #1a201d;
 
-  /* Hueso: del texto primario al terciario. El estado activo es hueso solido. */
-  --color-bone-100: #edeae3;
-  --color-bone-300: #c3c1ba;
-  --color-bone-400: #9a9a93;
-  --color-bone-600: #6a6e69;
+  /* Lineas y separadores. Nunca texto. */
+  --color-line-soft: #1e2422;
+  --color-line: #2c3431;
+  --color-line-strong: #3d4844;
+
+  /*
+   * Tinta. Los tres primeros son para TEXTO y estan medidos contra el peor
+   * fondo posible: cristal al 88% sobre una celda del terreno a pleno color.
+   *
+   *   ink        13,4:1   titulares y cifras
+   *   ink-soft    9,2:1   texto secundario
+   *   muted       5,7:1   etiquetas pequeñas
+   *
+   * `faint` NO cumple, y por eso no se usa nunca para texto: solo filetes,
+   * iconos decorativos y estados apagados.
+   */
+  --color-ink: #edeae3;
+  --color-ink-soft: #c3c1ba;
+  --color-muted: #9a9a93;
+  --color-faint: #6a6e69;
 
   /* Rampa semantica. La unica saturacion de la interfaz. */
   --color-risk-low: #22c55e;
@@ -50,8 +58,8 @@ html {
 
 html,
 body {
-  background-color: var(--color-soil-900);
-  color: var(--color-bone-100);
+  background-color: var(--color-canvas);
+  color: var(--color-ink);
 }
 
 body {
@@ -63,52 +71,119 @@ body {
 }
 
 /*
- * Datos en monoespaciada con cifras tabulares: en un panel de metricas, que los
- * digitos no bailen al cambiar de celda no es un detalle estetico.
+ * TODO LO PROPIO VA EN `components`, NO SUELTO.
+ *
+ * Una regla fuera de capa gana a cualquier utilidad de Tailwind, que vive en
+ * `utilities`. Con `.panel` suelta, un `position: relative` suyo anulaba la
+ * clase `absolute` del inspector y lo mandaba a la esquina superior izquierda.
+ * Dentro de `components` el orden se invierte y la utilidad manda, que es lo que
+ * espera cualquiera que escriba `class="panel absolute"`.
  */
-.tabular {
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
+@layer components {
+  /* 1 — Cifra titular. Es el dato por el que se abrió el panel. */
+  .display {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(2rem, 3.1vw, 2.75rem);
+    font-weight: 500;
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+    color: var(--color-ink);
+  }
 
-/*
- * Etiquetas de instrumento: mono, versalitas, muy espaciadas. Es la textura que
- * mas distingue esta interfaz de una plantilla, y solo se aplica a etiquetas
- * cortas —nunca a texto corrido, donde el tracking amplio dificulta leer—.
- */
-.eyebrow {
-  font-family: var(--font-mono);
-  font-size: 0.625rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--color-bone-600);
+  /* 2 — Cabecera de grupo. Separa bloques de sentido dentro del panel. */
+  .group-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    line-height: 1.2;
+    color: var(--color-ink);
+  }
+
+  /*
+   * 3 — Etiqueta de instrumento: mono, versalitas, muy espaciadas. Es la textura
+   * que más distingue esta interfaz de una plantilla, y solo se aplica a
+   * etiquetas cortas —nunca a texto corrido, donde el tracking amplio estorba—.
+   */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  /*
+   * 4 — Datos en monoespaciada con cifras tabulares: en un panel de métricas,
+   * que los dígitos no bailen al cambiar de celda no es un detalle estético.
+   */
+  .tabular {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /*
+   * SUPERFICIES SOLIDAS.
+   *
+   * Hubo tres intentos de cristal liquido —desenfoque, refraccion con filtro
+   * SVG, canto en degradado— y ninguno se sostuvo sobre esta escena. La razon de
+   * fondo: el vidrio necesita un fondo luminoso y variado detras para existir, y
+   * aqui el fondo es un terreno oscuro con zonas de color plano. Lo que en las
+   * referencias es un material, aqui salia como un rectangulo turbio.
+   *
+   * Un panel opaco no es una rendicion: es la decision correcta cuando lo que
+   * hay detras no aporta. Aqui el trabajo lo hacen el contraste, la alineacion y
+   * el ritmo tipografico, no el material.
+   *
+   * `.panel` es la unica superficie del sistema. Un solo color, un solo borde,
+   * una sola sombra: si dos paneles se ven distintos es porque contienen cosas
+   * distintas, no porque tengan estilos distintos.
+   */
+  .panel {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-line);
+    box-shadow: 0 10px 30px -16px rgb(0 0 0 / 0.85);
+  }
+
+  /*
+   * Cromo pequeño: pildoras, compas, etiquetas flotantes.
+   *
+   * Mismo color que el panel pero mas oscuro y sin sombra larga: son controles
+   * que se apoyan sobre el terreno, no piezas que floten sobre el.
+   */
+  .floating {
+    background-color: var(--color-canvas);
+    border: 1px solid var(--color-line);
+    box-shadow: 0 4px 14px -8px rgb(0 0 0 / 0.8);
+  }
 }
 
 /* Foco visible siempre: la malla se recorre con teclado. */
 :focus-visible {
-  outline: 2px solid var(--color-bone-100);
+  outline: 2px solid var(--color-ink);
   outline-offset: 2px;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 
 /*
- * Superficie flotante sobre el terreno.
+ * Entrada del contenido del inspector al cambiar de celda.
  *
- * Un desenfoque leve, no glassmorphism: sobre una escena 3D que se mueve, el
- * cristal esmerilado destruye la legibilidad. El fondo es casi opaco y el
- * desenfoque solo suaviza lo que asoma por los bordes.
+ * Marca que los datos son otros. Sin ella, cambiar de celda repinta veinte
+ * cifras en el sitio y el ojo no tiene forma de saber que algo ocurrió.
+ * Solo transform y opacity: ninguna propiedad que provoque layout o paint.
  */
-.floating {
-  background-color: color-mix(in srgb, var(--color-soil-850) 92%, transparent);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--color-soil-600);
+@keyframes ceres-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
-@media (prefers-reduced-transparency: reduce) {
-  .floating {
-    background-color: var(--color-soil-850);
-    backdrop-filter: none;
-  }
+.rise {
+  animation: ceres-rise 220ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* Sin movimiento no esencial para quien lo ha pedido. */

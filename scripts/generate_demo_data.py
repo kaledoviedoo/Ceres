@@ -90,6 +90,9 @@ def render_cleanup(dataset: DemoDataset) -> str:
       verdad al introducir la zona critica: 24 + 24 = 48 filas.
     - `grid_cells`: si se regenera con una malla mas pequena, las celdas de fuera
       del nuevo rectangulo quedarian huerfanas.
+    - `plots`: al retirar un lote del generador, sus filas y sus celdas seguian
+      en la base y en la interfaz. Un `INSERT ... ON CONFLICT` no borra lo que
+      dejo de existir.
 
     La limpieza es acotada: solo toca filas de esta finca de demo. Las
     observaciones creadas por la API (sin autor) no se tocan, y tampoco se tocan
@@ -100,12 +103,23 @@ def render_cleanup(dataset: DemoDataset) -> str:
     plot_ids = ", ".join(sql_literal(row["id"]) for row in plots)
     width = plots[0]["grid_width"]
     height = plots[0]["grid_height"]
+    farm_ids = ", ".join(sql_literal(row["id"]) for row in dataset.table("farms").rows)
 
     return (
         "-- Limpieza de filas de generaciones anteriores (ver render_cleanup)\n"
         f"DELETE FROM observations WHERE created_by IN ({user_ids});\n"
         f"DELETE FROM grid_cells WHERE plot_id IN ({plot_ids})\n"
         f"  AND (x >= {width} OR y >= {height});\n"
+        # Lotes que el generador ya no produce. Al retirar uno del dataset, sus
+        # filas y sus celdas se quedaban en la base y seguian saliendo en la
+        # interfaz: un `INSERT ... ON CONFLICT` no borra lo que dejo de existir.
+        "DELETE FROM crop_cycles WHERE plot_id IN (\n"
+        f"  SELECT id FROM plots WHERE farm_id IN ({farm_ids}) AND id NOT IN ({plot_ids})\n"
+        ");\n"
+        "DELETE FROM grid_cells WHERE plot_id IN (\n"
+        f"  SELECT id FROM plots WHERE farm_id IN ({farm_ids}) AND id NOT IN ({plot_ids})\n"
+        ");\n"
+        f"DELETE FROM plots WHERE farm_id IN ({farm_ids}) AND id NOT IN ({plot_ids});\n"
     )
 
 

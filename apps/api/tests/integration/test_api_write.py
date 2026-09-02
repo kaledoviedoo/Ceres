@@ -84,10 +84,10 @@ def test_observation_on_missing_cell_returns_404(client):
 
 
 def test_observation_with_mismatched_cycle_returns_409(
-    client, cell_in_plot_b, crop_cycle_id
+    client, cell_in_other_plot, crop_cycle_id
 ):
     response = post_observation(
-        client, cell_in_plot_b["id"], crop_cycle_id=str(crop_cycle_id)
+        client, cell_in_other_plot["id"], crop_cycle_id=str(crop_cycle_id)
     )
 
     assert response.status_code == 409
@@ -138,8 +138,8 @@ def test_harvest_on_missing_cell_returns_404(client, crop_cycle_id):
     assert post_harvest(client, MISSING_ID, crop_cycle_id).status_code == 404
 
 
-def test_harvest_with_mismatched_cycle_returns_409(client, cell_in_plot_b, crop_cycle_id):
-    assert post_harvest(client, cell_in_plot_b["id"], crop_cycle_id).status_code == 409
+def test_harvest_with_mismatched_cycle_returns_409(client, cell_in_other_plot, crop_cycle_id):
+    assert post_harvest(client, cell_in_other_plot["id"], crop_cycle_id).status_code == 409
 
 
 def test_harvests_of_missing_cell_return_404(client):

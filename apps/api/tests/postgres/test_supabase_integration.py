@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import uuid
 
+from uuid import NAMESPACE_URL, uuid5
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
@@ -130,10 +132,10 @@ def test_seed_loaded_the_full_dataset(pg_session):
 
     assert counts.orgs == 1
     assert counts.farms == 1
-    assert counts.plots == 2
+    assert counts.plots == 1
     assert counts.crops == 1
     assert counts.cycles == 1
-    assert counts.cells == 800  # 400 por lote
+    assert counts.cells == 400  # un lote de 20 x 20
     assert counts.observations == 24
 
 
@@ -366,7 +368,7 @@ def test_read_endpoints_against_postgres(pg_client):
     assert len(farms) == 1
 
     farm = pg_client.get(f"/api/v1/farms/{farms[0]['id']}").json()
-    assert len(farm["plots"]) == 2
+    assert len(farm["plots"]) == 1
 
     plot_a = next(p for p in farm["plots"] if p["code"] == "A")
     cells = pg_client.get(f"/api/v1/plots/{plot_a['id']}/cells").json()
@@ -484,19 +486,74 @@ def test_observation_and_harvest_persist(pg_client, pg_session, seeded_cell, see
 # --- D-020: integridad Plot <-> CropCycle -------------------------------------
 
 
-def test_cell_from_another_plot_is_rejected(pg_client, pg_session, seeded_cycle):
-    """Celda de Plot B con un ciclo que se siembra en Plot A -> 409."""
-    cell_b = pg_session.execute(
-        text("""
-        SELECT gc.id FROM grid_cells gc
-        JOIN plots p ON p.id = gc.plot_id
-        WHERE p.code = 'B' LIMIT 1
-        """)
-    ).scalar()
+@pytest.fixture
+def control_plot(pg_session):
+    """Un segundo lote, creado por el test y borrado al terminar.
 
+    El dataset de demo tiene UN solo lote: el que habia de mas no tenia ciclo de
+    cultivo y en la interfaz aparecia como una opcion que no mostraba nada. Pero
+    el invariante que este test protege —no puedes predecir sobre una celda
+    usando el ciclo de OTRO lote— sigue necesitando dos lotes, y contra Postgres
+    de verdad, que es donde viven las claves foraneas.
+
+    Se limpia siempre, tambien si el test falla: dejar filas de prueba en la base
+    de la demo es como acabamos con un lote fantasma en primer lugar.
+    """
+    plot_id = uuid5(NAMESPACE_URL, "ceres/test/pg/plot-control")
+    cell_id = uuid5(NAMESPACE_URL, "ceres/test/pg/cell-control")
+
+    plantilla = pg_session.execute(
+        text("SELECT * FROM plots WHERE code = 'A' LIMIT 1")
+    ).mappings().one()
+    celda = pg_session.execute(
+        text("SELECT * FROM grid_cells WHERE plot_id = :p LIMIT 1"),
+        {"p": plantilla["id"]},
+    ).mappings().one()
+
+    pg_session.execute(
+        text("""
+        INSERT INTO plots (id, farm_id, name, code, grid_width, grid_height,
+                           cell_size_m, origin_latitude, origin_longitude)
+        VALUES (:id, :farm_id, 'Lote de control', 'Z', :w, :h, :size, :lat, :lon)
+        """),
+        {
+            "id": plot_id, "farm_id": plantilla["farm_id"],
+            "w": plantilla["grid_width"], "h": plantilla["grid_height"],
+            "size": plantilla["cell_size_m"],
+            "lat": plantilla["origin_latitude"], "lon": plantilla["origin_longitude"],
+        },
+    )
+    pg_session.execute(
+        text("""
+        INSERT INTO grid_cells (id, plot_id, cell_code, x, y, elevation_m, slope_deg,
+                                soil_quality, plant_density, health_factor,
+                                base_yield_factor, centroid_latitude, centroid_longitude)
+        VALUES (:id, :plot_id, 'Z-00001', 0, 0, :elev, :slope, :soil, :dens,
+                :health, :base, :lat, :lon)
+        """),
+        {
+            "id": cell_id, "plot_id": plot_id,
+            "elev": celda["elevation_m"], "slope": celda["slope_deg"],
+            "soil": celda["soil_quality"], "dens": celda["plant_density"],
+            "health": celda["health_factor"], "base": celda["base_yield_factor"],
+            "lat": celda["centroid_latitude"], "lon": celda["centroid_longitude"],
+        },
+    )
+    pg_session.commit()
+
+    try:
+        yield {"plot_id": plot_id, "cell_id": cell_id}
+    finally:
+        pg_session.execute(text("DELETE FROM grid_cells WHERE plot_id = :p"), {"p": plot_id})
+        pg_session.execute(text("DELETE FROM plots WHERE id = :p"), {"p": plot_id})
+        pg_session.commit()
+
+
+def test_cell_from_another_plot_is_rejected(pg_client, control_plot, seeded_cycle):
+    """Celda de otro lote con un ciclo sembrado en Plot A -> 409."""
     response = pg_client.post(
         "/api/v1/predictions",
-        json={"cell_id": str(cell_b), "crop_cycle_id": str(seeded_cycle)},
+        json={"cell_id": str(control_plot["cell_id"]), "crop_cycle_id": str(seeded_cycle)},
     )
 
     assert response.status_code == 409
@@ -596,9 +653,9 @@ def test_reapplying_the_seed_does_not_duplicate_rows(pg_session):
 
     after = counts()
 
-    assert after.cells == before.cells == 800
+    assert after.cells == before.cells == 400
     assert after.observations == before.observations == 24
-    assert after.plots == before.plots == 2
+    assert after.plots == before.plots == 1
 
 
 def test_seed_cleanup_leaves_api_observations_alone(pg_session, seeded_cell):

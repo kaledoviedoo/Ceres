@@ -1,45 +1,64 @@
 "use client";
 
 /**
- * Panel de la celda seleccionada.
+ * Ficha analítica de un metro cuadrado.
  *
- * Mezcla dos orígenes y lo dice claramente en pantalla:
+ * NO ES UNA LISTA DE PROPIEDADES. La versión anterior volcaba quince filas
+ * `etiqueta: número` y obligaba a saberse el lote de memoria para saber si
+ * "suelo 18,1 %" era bueno o malo. Aquí cada cifra llega con su contexto: dónde
+ * cae dentro del reparto de la parcela, y de dónde sale.
  *
- * - ESTADO: lo que la celda es (pendiente, suelo, densidad, sanidad). Viene de
- *   `GET /cells/{id}` y está guardado en la base de datos.
- * - ESTIMACIÓN: lo que el motor calcula ahora mismo sobre ese estado. Viene del
- *   overview y NO está guardado.
+ * SEIS BLOQUES, de lo espacial a lo predictivo, que es el orden en que se hacen
+ * las preguntas al abrir una celda:
  *
- * Confundir las dos cosas sería el error más fácil de cometer aquí, y el que
- * más caro saldría: el valor del Digital Twin está en poder distinguir lo que
- * se midió de lo que se estimó.
+ *   1. QUE celda es          código, riesgo
+ *   2. DONDE está            coordenadas, elevación, pendiente, procedencia
+ *   3. CUANTO da             rendimiento y su perfil en la hilera
+ *   4. COMO está el suelo    suelo, sanidad, densidad, con percentil
+ *   5. CUANTO se pierde      pérdida y score
+ *   6. QUE ha pasado antes   histórico, o su ausencia declarada
  *
- * Sin celda seleccionada el panel no se queda vacío: muestra el resumen del
- * lote. Un hueco de 360 píxeles esperando un clic es espacio desperdiciado.
+ * DOS ORIGENES, Y SE DICE CUAL ES CUAL. Lo MEDIDO —pendiente, suelo, densidad,
+ * sanidad— está guardado en la base. Lo ESTIMADO —rendimiento, pérdida, riesgo—
+ * lo calcula el motor en cada consulta y no está guardado hasta que alguien pulsa
+ * "Guardar predicción". Confundirlos sería el error más caro de esta pantalla: el
+ * valor de un Digital Twin está en poder distinguir lo que se midió de lo que se
+ * estimó.
+ *
+ * Y UN TERCER ORIGEN, el más fácil de olvidar: la elevación es SINTETICA. El
+ * bloque de ubicación lo dice, porque una coordenada con seis decimales invita a
+ * creer que hay un DEM detrás.
  */
 
-import { MetricGroup, MetricRow } from "@/components/cell-inspector/MetricRow";
+import { useMemo } from "react";
+
 import { PredictionPanel } from "@/components/cell-inspector/PredictionPanel";
+import { LineChart, MetricBar, ScoreDial, Stat, type SeriesPoint } from "@/components/ui/DataViz";
 import { RiskBadge } from "@/components/ui/Badge";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Spinner } from "@/components/ui/Spinner";
+import { ceresApi } from "@/lib/api/endpoints";
+import { useApiResource } from "@/lib/api/useApiResource";
 import {
   formatDegrees,
   formatDensity,
   formatIndex,
   formatInteger,
   formatKg,
-  formatMeters,
   formatPercent,
   formatScore,
 } from "@/lib/presentation/format";
-import { riskDistribution } from "@/lib/presentation/risk";
-import type { CellDetail, CellOverview, Plot } from "@/lib/types/api";
+import { RISK_COLORS, riskDistribution } from "@/lib/presentation/risk";
+import { percentile } from "@/lib/terrain/analysis";
+import type { ElevationField } from "@/lib/terrain/elevation";
+import type { CellDetail, CellOverview, Plot, RiskLevel } from "@/lib/types/api";
 
 interface CellInspectorProps {
   cell: CellDetail | null;
   overview: CellOverview | null;
   cells: CellOverview[];
+  /** Solo para leer la procedencia. El inspector no construye geometría. */
+  field: ElevationField | null;
   plot: Plot | null;
   cropCycleId: string | null;
   isLoading: boolean;
@@ -48,10 +67,20 @@ interface CellInspectorProps {
   onClear: () => void;
 }
 
+/** Latitud y longitud con hemisferio, como en cualquier ficha de campo. */
+function formatLatitude(value: number): string {
+  return `${Math.abs(value).toFixed(6)}° ${value >= 0 ? "N" : "S"}`;
+}
+
+function formatLongitude(value: number): string {
+  return `${Math.abs(value).toFixed(6)}° ${value >= 0 ? "E" : "O"}`;
+}
+
 export function CellInspector({
   cell,
   overview,
   cells,
+  field,
   plot,
   cropCycleId,
   isLoading,
@@ -59,109 +88,306 @@ export function CellInspector({
   onRetry,
   onClear,
 }: CellInspectorProps) {
+  // El histórico se pide siempre que haya celda: es lo que decide si el gráfico
+  // tiene serie o estado vacío, y no se puede saber sin preguntar.
+  const history = useApiResource(
+    cell ? (signal) => ceresApi.listPredictions(cell.id, signal) : null,
+    [cell?.id],
+  );
+
+  const yields = useMemo(() => cells.map((c) => c.projected_yield_kg), [cells]);
+  /** Fracción del lote que rinde MENOS que esta celda. Un solo cálculo para
+   *  la barra y para la frase que la explica: si divergieran, el texto
+   *  contaría algo distinto de lo que se ve. */
+  const rendimientoPct = overview
+    ? percentile(yields, overview.projected_yield_kg)
+    : 0;
+
+  const row = useMemo(() => {
+    if (!cell) return [];
+    return cells.filter((c) => c.y === cell.y).sort((a, b) => a.x - b.x);
+  }, [cells, cell]);
+
   if (error) return <ErrorState message={error} onRetry={onRetry} />;
   if (isLoading) return <Spinner label="Cargando la celda" />;
-  if (!cell) return <PlotSummary plot={plot} cells={cells} />;
+  if (!cell) return <PlotSummary plot={plot} cells={cells} field={field} />;
+
+  const level: RiskLevel = overview?.risk_level ?? "medium";
+  const tone = RISK_COLORS[level].fill;
+
+  const transect: SeriesPoint[] = row.map((c) => ({
+    label: `x ${c.x}`,
+    value: c.projected_yield_kg,
+  }));
+  const activeIndex = row.findIndex((c) => c.x === cell.x);
+
+  const predicciones: SeriesPoint[] = (history.data?.predictions ?? []).map((p) => ({
+    label: p.created_at,
+    value: p.projected_yield_kg,
+  }));
 
   return (
-    <div className="space-y-5">
-      <header className="flex items-start justify-between gap-3">
-        <div>
+    // `key` por celda: reinicia la animación de entrada, que es lo que avisa de
+    // que las cifras de abajo son ya otras.
+    <div key={cell.id} className="rise space-y-6">
+      {/* ── 1 · Qué celda ───────────────────────────────────────────────── */}
+      <header>
+        <div className="flex items-start justify-between gap-3">
           <p className="eyebrow">Celda</p>
-          <h2 className="tabular text-2xl font-medium leading-tight text-bone-100">
-            {cell.cell_code}
-          </h2>
-          <p className="tabular mt-1 text-[11px] text-bone-400">
-            x {cell.x} · y {cell.y} · {formatMeters(cell.elevation_m)} s.&nbsp;n.&nbsp;m.
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          {overview && <RiskBadge level={overview.risk_level} />}
           <button
             type="button"
             onClick={onClear}
             aria-label="Cerrar la celda y volver al resumen del lote"
-            className="text-bone-600 transition-colors hover:text-bone-100"
+            className="-mr-1 -mt-1 grid h-6 w-6 place-items-center rounded text-muted transition-colors hover:bg-line-soft hover:text-ink"
           >
-            <span aria-hidden="true" className="text-sm">
+            <span aria-hidden="true" className="text-sm leading-none">
               ✕
             </span>
           </button>
         </div>
+
+        <div className="mt-1 flex items-end justify-between gap-3">
+          <h2 className="tabular text-2xl font-medium leading-none text-ink">{cell.cell_code}</h2>
+          {overview && <RiskBadge level={overview.risk_level} />}
+        </div>
       </header>
 
+      {/* ── 2 · Dónde está ──────────────────────────────────────────────── */}
+      <Block title="Ubicación" note={`x ${cell.x} · y ${cell.y}`}>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+          <Stat label="Latitud" value={formatLatitude(cell.centroid_latitude)} />
+          <Stat label="Longitud" value={formatLongitude(cell.centroid_longitude)} />
+          <Stat label="Elevación" value={`${cell.elevation_m.toFixed(2)} m`} hint="sobre el nivel del mar" />
+          <Stat label="Pendiente" value={formatDegrees(cell.slope_deg)} />
+        </div>
+
+        {field && <ProvenanceNote field={field} />}
+      </Block>
+
+      {/* ── 3 · Cuánto da ───────────────────────────────────────────────── */}
       {overview && (
-        <MetricGroup title="Estimación actual · sin guardar">
-          <Headline value={formatKg(overview.projected_yield_kg)} label="Rendimiento proyectado" />
-          <MetricRow label="Cajas proyectadas" value={formatInteger(overview.projected_boxes)} />
-          <MetricRow
-            label="Pérdida estimada"
-            value={formatPercent(overview.estimated_loss_percentage)}
-          />
-          <MetricRow label="Risk score" value={formatScore(overview.risk_score)} />
-          <MetricRow label="Nivel de riesgo" value={<RiskBadge level={overview.risk_level} />} />
-        </MetricGroup>
+        <Block title="Rendimiento estimado" note="Sin guardar">
+          <p className="display">{formatKg(overview.projected_yield_kg)}</p>
+          <p className="tabular mt-1.5 text-[11px] text-muted">
+            {formatInteger(overview.projected_boxes)} cajas proyectadas
+          </p>
+
+          <div className="mt-4">
+            <LineChart
+              points={transect}
+              format={formatKg}
+              highlight={activeIndex}
+              caption={`Fila ${cell.y + 1} · oeste → este`}
+              emptyTitle="Sin hilera que comparar"
+              emptyHint="Hace falta más de una celda en la fila."
+              ariaLabel={`Rendimiento a lo largo de la fila ${cell.y + 1}.`}
+            />
+          </div>
+        </Block>
       )}
 
-      <MetricGroup title="Estado del terreno">
-        <MetricRow label="Pendiente" value={formatDegrees(cell.slope_deg)} />
-        <MetricRow label="Calidad de suelo" value={formatIndex(cell.soil_quality)} />
-        <MetricRow label="Densidad de siembra" value={formatDensity(cell.plant_density)} />
-        <MetricRow label="Sanidad" value={formatIndex(cell.health_factor)} />
-        <MetricRow label="Factor residual" value={formatScore(cell.base_yield_factor)} />
-      </MetricGroup>
+      {/* ── 4 · Cómo está el terreno ────────────────────────────────────── */}
+      <Block title="Condición del terreno" note="Medido">
+        {/* Aquí las barras van SIN percentil a propósito: son condiciones de
+            entrada, no resultados, y ordenarlas entre celdas invitaría a leer
+            "mejor suelo que el 70 % del lote" como si fuera una conclusión del
+            motor. El percentil vive donde sí es una conclusión: el rendimiento. */}
+        <MetricBar
+          label="Calidad de suelo"
+          value={formatIndex(cell.soil_quality)}
+          fill={cell.soil_quality}
+        />
+        <MetricBar
+          label="Sanidad"
+          value={formatIndex(cell.health_factor)}
+          fill={cell.health_factor}
+        />
+        <MetricBar
+          label="Densidad de siembra"
+          value={formatDensity(cell.plant_density)}
+          fill={Math.min(1, cell.plant_density / 4)}
+        />
+        <MetricBar
+          label="Factor residual"
+          value={formatScore(cell.base_yield_factor)}
+          fill={Math.min(1, cell.base_yield_factor / 1.5)}
+        />
+      </Block>
 
-      <MetricGroup title="Histórico">
-        <PredictionPanel cellId={cell.id} cropCycleId={cropCycleId} />
-      </MetricGroup>
+      {/* ── 5 · Cuánto se pierde ────────────────────────────────────────── */}
+      {overview && (
+        <Block title="Riesgo" note="Estimado">
+          <div className="flex items-end justify-between gap-4">
+            <div>
+              <p className="tabular text-2xl font-medium leading-none" style={{ color: tone }}>
+                {formatPercent(overview.estimated_loss_percentage)}
+              </p>
+              <p className="eyebrow mt-1.5">Pérdida estimada</p>
+            </div>
+            <div className="text-right">
+              <ScoreDial value={overview.risk_score} tone={tone} />
+              <p className="tabular text-[11px] text-ink">{formatScore(overview.risk_score)}</p>
+              <p className="eyebrow">Risk score</p>
+            </div>
+          </div>
+
+          {/* El percentil, en palabras. "p69" a secas no dice de qué población
+              sale ni hacia dónde es mejor: hay que leer la cifra Y saberse el
+              lote. La frase lo cierra sin añadir ningún cálculo nuevo: es el
+              mismo valor que pinta la barra. */}
+          <div className="mt-3">
+            <MetricBar
+              label="Posición en el lote"
+              value={formatKg(overview.projected_yield_kg)}
+              fill={rendimientoPct}
+              percentile={rendimientoPct}
+              tone={tone}
+            />
+            <p className="mt-1 text-[11px] leading-relaxed text-muted">
+              Rinde más que el {Math.round(rendimientoPct * 100)} % de las{" "}
+              {yields.length} celdas del lote.
+            </p>
+          </div>
+        </Block>
+      )}
+
+      {/* ── 6 · Qué ha pasado antes ─────────────────────────────────────── */}
+      <Block title="Histórico" note={`${predicciones.length} registros`}>
+        <LineChart
+          points={predicciones}
+          format={formatKg}
+          caption="Predicciones guardadas"
+          emptyTitle="Sin registros históricos"
+          emptyHint="Las predicciones son inmutables y se acumulan: en cuanto guardes dos, aquí aparecerá la tendencia."
+          ariaLabel="Historial de predicciones guardadas para esta celda."
+        />
+
+        <div className="mt-4">
+          <PredictionPanel cellId={cell.id} cropCycleId={cropCycleId} />
+        </div>
+      </Block>
     </div>
   );
 }
 
-/** Cifra destacada: número grande, etiqueta pequeña. */
-function Headline({ value, label }: { value: string; label: string }) {
+/**
+ * La nota de procedencia.
+ *
+ * Va justo debajo de unas coordenadas con seis decimales, y ahí está su razón de
+ * ser: esa precisión invita a creer que detrás hay un modelo digital del terreno.
+ * No lo hay. Mientras la elevación sea generada, la interfaz tiene que decirlo
+ * donde se lee la elevación, no en una nota al pie que nadie abre.
+ */
+function ProvenanceNote({ field }: { field: ElevationField }) {
+  const p = field.provenance;
+  const etiqueta = { synthetic: "Sintética", dem: "DEM", lidar: "LiDAR" }[p.kind];
+
   return (
-    <div className="mb-2 border-b border-soil-700 pb-2">
-      <p className="tabular text-3xl font-medium leading-none text-bone-100">{value}</p>
-      <p className="eyebrow mt-1.5">{label}</p>
-    </div>
+    <p className="mt-3 flex items-start gap-2 border-t border-line-soft pt-3 text-[10px] leading-relaxed text-muted">
+      <span
+        aria-hidden="true"
+        className={`mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full ${
+          p.measured ? "bg-risk-low" : "bg-risk-medium"
+        }`}
+      />
+      <span>
+        <span className="text-ink-soft">Elevación {etiqueta.toLowerCase()}</span>
+        {" · "}
+        {p.measured ? "medición" : "dato generado, no medido"}
+        {" · resolución "}
+        {p.nominalResolutionM} m nominal
+        {p.effectiveResolutionM !== p.nominalResolutionM &&
+          ` (${p.effectiveResolutionM} m efectiva)`}
+      </span>
+    </p>
   );
 }
 
-/** Lo que se ve cuando no hay ninguna celda abierta. */
-function PlotSummary({ plot, cells }: { plot: Plot | null; cells: CellOverview[] }) {
+function Block({
+  title,
+  note,
+  children,
+}: {
+  title: string;
+  note?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <div className="mb-3 flex items-baseline justify-between gap-3 border-b border-line pb-1.5">
+        <h3 className="group-title">{title}</h3>
+        {note && <span className="eyebrow shrink-0">{note}</span>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+const LEVELS: RiskLevel[] = ["low", "medium", "high"];
+
+/**
+ * Lo que se ve cuando no hay ninguna celda abierta.
+ *
+ * Corto a propósito: es una invitación a hacer clic, no un segundo panel de
+ * métricas. La proporción por nivel ya está en la franja del pie.
+ */
+function PlotSummary({
+  plot,
+  cells,
+  field,
+}: {
+  plot: Plot | null;
+  cells: CellOverview[];
+  field: ElevationField | null;
+}) {
   if (!plot) {
     return (
-      <p className="text-sm text-bone-400">
+      <p className="text-sm text-muted">
         Selecciona un lote y un ciclo de cultivo para inspeccionar el terreno.
       </p>
     );
   }
 
   const counts = riskDistribution(cells);
-  const total = cells.length;
 
   return (
     <div className="space-y-5">
       <header>
         <p className="eyebrow">Lote</p>
-        <h2 className="text-2xl font-medium leading-tight text-bone-100">{plot.name}</h2>
-        <p className="tabular mt-1 text-[11px] text-bone-400">
-          {plot.grid_width} × {plot.grid_height} · {formatInteger(plot.area_m2)} m² ·{" "}
-          {plot.cell_size_m} m por celda
+        <h2 className="mt-1 text-xl font-medium leading-tight text-ink">{plot.name}</h2>
+        <p className="tabular mt-1.5 text-[11px] text-muted">
+          {plot.grid_width} × {plot.grid_height} · {formatInteger(plot.area_m2)} m²
         </p>
       </header>
 
-      {total > 0 && (
-        <MetricGroup title="Reparto del riesgo">
-          <Headline value={formatInteger(counts.high)} label="Celdas en riesgo alto" />
-          <MetricRow label="Riesgo medio" value={formatInteger(counts.medium)} />
-          <MetricRow label="Riesgo bajo" value={formatInteger(counts.low)} />
-          <MetricRow label="Celdas evaluadas" value={formatInteger(total)} />
-        </MetricGroup>
+      {field && field.reliefM > 0 && (
+        <Block title="Relieve" note="Elevación">
+          <div className="grid grid-cols-2 gap-x-4">
+            <Stat label="Mínima" value={`${field.source.minMeters.toFixed(2)} m`} />
+            <Stat label="Máxima" value={`${field.source.maxMeters.toFixed(2)} m`} />
+          </div>
+          <p className="tabular mt-2 text-[11px] text-muted">
+            Desnivel {field.reliefM.toFixed(2)} m en {plot.grid_width} × {plot.grid_height} m
+          </p>
+          <ProvenanceNote field={field} />
+        </Block>
       )}
 
-      <p className="text-xs leading-relaxed text-bone-600">
+      {cells.length > 0 && (
+        <Block title="Reparto del riesgo" note={`${formatInteger(cells.length)} celdas`}>
+          {LEVELS.map((level) => (
+            <MetricBar
+              key={level}
+              label={`Riesgo ${RISK_COLORS[level].label.toLowerCase()}`}
+              value={formatInteger(counts[level])}
+              fill={counts[level] / cells.length}
+              tone={RISK_COLORS[level].fill}
+            />
+          ))}
+        </Block>
+      )}
+
+      <p className="text-xs leading-relaxed text-muted">
         Haz clic en una celda del terreno para inspeccionarla. Con el teclado, tabula hasta la
         malla y recórrela con las flechas.
       </p>

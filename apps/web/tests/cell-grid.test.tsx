@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { CellGrid } from "@/components/terrain/CellGrid";
 import { RISK_COLORS } from "@/lib/presentation/risk";
+import { zoneBorders } from "@/lib/terrain/analysis";
 import { buildOverview } from "./fixtures";
 
 function renderGrid(overrides: Partial<Parameters<typeof CellGrid>[0]> = {}) {
@@ -75,10 +76,18 @@ describe("CellGrid", () => {
     const { overview } = renderGrid();
     const target = overview.cells[42]!;
     const cell = screen.getByTestId(`cell-${target.cell_code}`);
+    const antes = cell.style.boxShadow;
 
     await user.hover(cell);
 
-    expect(cell.style.boxShadow).toContain("#edeae3");
+    // Se comprueba que APARECE un anillo, no de qué color es. Fijar el hex ataba
+    // el test a la paleta, y cambiar de tema oscuro a claro lo rompía sin que
+    // nada del comportamiento hubiera cambiado.
+    expect(cell.style.boxShadow).not.toBe(antes);
+    expect(cell.style.boxShadow).toMatch(/0 0 0 1px/);
+
+    await user.unhover(cell);
+    expect(cell.style.boxShadow).toBe(antes);
   });
 
   it("avisa del cell_id al hacer click", async () => {
@@ -231,5 +240,39 @@ describe("CellGrid", () => {
       screen.getAllByRole("gridcell").map((cell) => cell.style.backgroundColor),
     );
     expect(lossColors).not.toEqual(riskColors);
+  });
+});
+
+describe("contorno de zona en la malla plana", () => {
+  it("marca exactamente las celdas que `zoneBorders` declara frontera", () => {
+    // La afirmacion que se protege aqui es que las dos vistas cuentan LO MISMO.
+    // La malla plana y el relieve dibujan el contorno de forma distinta —sombras
+    // interiores frente a segmentos de linea—, pero la frontera sale de la misma
+    // funcion. Si alguien reimplementa una de las dos, esto se cae.
+    const { overview } = renderGrid();
+    const esperadas = zoneBorders(overview.cells);
+
+    const marcadas = screen
+      .getAllByRole("gridcell")
+      .filter((c) => c.getAttribute("data-zone") === "high-border");
+
+    expect(marcadas.length).toBe(esperadas.size);
+    expect(marcadas.length).toBeGreaterThan(0);
+
+    for (const celda of marcadas) {
+      const clave = `${celda.getAttribute("data-x")},${celda.getAttribute("data-y")}`;
+      expect(esperadas.has(clave)).toBe(true);
+      expect(celda.getAttribute("data-risk")).toBe("high");
+    }
+  });
+
+  it("ninguna celda que no sea de riesgo alto lleva contorno", () => {
+    renderGrid();
+
+    for (const celda of screen.getAllByRole("gridcell")) {
+      if (celda.getAttribute("data-zone")) {
+        expect(celda.getAttribute("data-risk")).toBe("high");
+      }
+    }
   });
 });

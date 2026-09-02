@@ -127,10 +127,10 @@ def test_demo_dataset_matches_brief_contents():
 
     assert summary["organizations"] == 1
     assert summary["farms"] == 1
-    assert summary["plots"] == 2
+    assert summary["plots"] == 1
     assert summary["crops"] == 1
     assert summary["crop_cycles"] == 1
-    assert summary["grid_cells"] == 800  # 400 por lote
+    assert summary["grid_cells"] == 400  # un lote de 20 x 20
     assert summary["observations"] > 0
 
 

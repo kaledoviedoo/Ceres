@@ -27,6 +27,7 @@ disponible.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 from fastapi.testclient import TestClient
@@ -125,8 +126,41 @@ def plot_a_id(demo_dataset):
 
 
 @pytest.fixture
-def plot_b_id(demo_dataset):
-    return demo_dataset.table("plots").rows[1]["id"]
+def other_plot(db_engine, demo_dataset):
+    """Un segundo lote, creado por el test y no por el dataset de demo.
+
+    El dataset tiene UN solo lote a proposito: un lote de demo sin ciclo de
+    cultivo aparecia en la interfaz como una opcion que al pulsarla no mostraba
+    nada. Pero los invariantes de coherencia entre lotes —no puedes pedir la
+    prediccion de una celda usando el ciclo de OTRO lote— siguen necesitando un
+    segundo lote para poder comprobarse.
+
+    Crearlo aqui es ademas mejor diseño de test: la comprobacion es duenya de su
+    propio montaje, en vez de depender de que el dataset de demo tenga una fila
+    de sobra que nadie mas usa.
+
+    Devuelve el lote y una celda suya, que es lo que necesitan los tests de 409.
+    """
+    plot = dict(demo_dataset.table("plots").rows[0])
+    plot["id"] = uuid5(NAMESPACE_URL, "ceres/test/plot/other")
+    plot["code"] = "Z"
+    plot["name"] = "Lote de control"
+
+    cell = dict(demo_dataset.table("grid_cells").rows[0])
+    cell["id"] = uuid5(NAMESPACE_URL, "ceres/test/cell/other")
+    cell["plot_id"] = plot["id"]
+    cell["cell_code"] = "Z-00001"
+
+    with db_engine.begin() as connection:
+        connection.execute(insert(Base.metadata.tables["plots"]), [plot])
+        connection.execute(insert(Base.metadata.tables["grid_cells"]), [cell])
+
+    return {"plot_id": plot["id"], "cell": cell}
+
+
+@pytest.fixture
+def other_plot_id(other_plot):
+    return other_plot["plot_id"]
 
 
 @pytest.fixture
@@ -150,8 +184,6 @@ def cell_id(cell):
 
 
 @pytest.fixture
-def cell_in_plot_b(demo_dataset, plot_b_id):
+def cell_in_other_plot(other_plot):
     """Celda del otro lote: sirve para probar la validacion de coherencia."""
-    return next(
-        row for row in demo_dataset.table("grid_cells").rows if row["plot_id"] == plot_b_id
-    )
+    return other_plot["cell"]

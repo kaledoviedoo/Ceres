@@ -9,6 +9,10 @@
  * norte. Con una cámara que orbita libremente, esa referencia se pierde en dos
  * arrastres si nadie la mantiene.
  *
+ * En la fase 7 medía 36 px con letras de 8: técnicamente estaba, pero no se
+ * podía leer, y un instrumento de orientación ilegible no orienta. Aquí ocupa lo
+ * que necesita para cumplir su función.
+ *
  * El disco gira imperativamente desde una referencia, no con estado de React:
  * orbitar dispara el cambio de ángulo continuamente y no debe repintar el árbol.
  * Es una única `transform`, propiedad de composición.
@@ -28,6 +32,13 @@ interface CompassRoseProps {
   onReset: () => void;
 }
 
+const CARDINALS = [
+  { label: "N", className: "left-1/2 top-0 -translate-x-1/2 text-ink" },
+  { label: "S", className: "bottom-0 left-1/2 -translate-x-1/2 text-muted" },
+  { label: "O", className: "left-0 top-1/2 -translate-y-1/2 text-muted" },
+  { label: "E", className: "right-0 top-1/2 -translate-y-1/2 text-muted" },
+];
+
 export function CompassRose({ handle, onZoomIn, onZoomOut, onReset }: CompassRoseProps) {
   const dialRef = useRef<HTMLDivElement>(null);
 
@@ -40,54 +51,59 @@ export function CompassRose({ handle, onZoomIn, onZoomOut, onReset }: CompassRos
   }));
 
   return (
-    <div className="floating flex items-center gap-1 rounded-full p-1">
+    <div className="floating flex flex-col items-center gap-1 rounded-lg p-1.5">
       <button
         type="button"
         onClick={onReset}
-        aria-label="Restablecer la vista de la cámara"
+        aria-label="Restablecer la orientación de la cámara al norte"
         title="Restablecer la vista"
-        className="group relative grid h-9 w-9 place-items-center rounded-full transition-colors hover:bg-soil-700"
+        className="group relative grid h-12 w-12 place-items-center rounded-full transition-colors hover:bg-line-soft"
       >
         {/* El disco gira; la aguja no. Así el norte siempre apunta al norte. */}
-        <div ref={dialRef} className="absolute inset-1 transition-transform duration-75">
-          <span className="absolute left-1/2 top-0 -translate-x-1/2 font-mono text-[8px] leading-none text-bone-100">
-            N
-          </span>
-          <span className="absolute bottom-0 left-1/2 -translate-x-1/2 font-mono text-[8px] leading-none text-bone-600">
-            S
-          </span>
-          <span className="absolute left-0 top-1/2 -translate-y-1/2 font-mono text-[8px] leading-none text-bone-600">
-            O
-          </span>
-          <span className="absolute right-0 top-1/2 -translate-y-1/2 font-mono text-[8px] leading-none text-bone-600">
-            E
-          </span>
+        <div ref={dialRef} className="absolute inset-0.5 transition-transform duration-75">
+          <span
+            aria-hidden="true"
+            className="absolute inset-[3px] rounded-full border border-line"
+          />
+          {CARDINALS.map((point) => (
+            <span
+              key={point.label}
+              className={`absolute font-mono text-[9px] font-medium leading-none ${point.className}`}
+            >
+              {point.label}
+            </span>
+          ))}
         </div>
-        <span aria-hidden="true" className="h-1 w-1 rounded-full bg-bone-400" />
+        <span
+          aria-hidden="true"
+          className="h-1.5 w-1.5 rounded-full bg-ink transition-colors group-hover:bg-ink"
+        />
       </button>
 
-      <div aria-hidden="true" className="h-5 w-px bg-soil-600" />
+      <div aria-hidden="true" className="h-px w-7 bg-line" />
 
-      <button
-        type="button"
-        onClick={onZoomOut}
-        aria-label="Alejar la cámara"
-        className="grid h-8 w-8 place-items-center rounded-full text-bone-400 transition-colors hover:bg-soil-700 hover:text-bone-100"
-      >
-        <span aria-hidden="true" className="text-base leading-none">
-          −
-        </span>
-      </button>
-      <button
-        type="button"
-        onClick={onZoomIn}
-        aria-label="Acercar la cámara"
-        className="grid h-8 w-8 place-items-center rounded-full text-bone-400 transition-colors hover:bg-soil-700 hover:text-bone-100"
-      >
-        <span aria-hidden="true" className="text-base leading-none">
-          +
-        </span>
-      </button>
+      <div className="flex flex-col">
+        <button
+          type="button"
+          onClick={onZoomIn}
+          aria-label="Acercar la cámara"
+          className="grid h-7 w-9 place-items-center rounded text-muted transition-colors hover:bg-line-soft hover:text-ink"
+        >
+          <span aria-hidden="true" className="text-base leading-none">
+            +
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={onZoomOut}
+          aria-label="Alejar la cámara"
+          className="grid h-7 w-9 place-items-center rounded text-muted transition-colors hover:bg-line-soft hover:text-ink"
+        >
+          <span aria-hidden="true" className="text-base leading-none">
+            −
+          </span>
+        </button>
+      </div>
     </div>
   );
 }

@@ -34,9 +34,9 @@ def test_crop_cycle_embeds_the_crop_parameters(client, plot_a_id):
     assert cycle["crop"]["box_capacity_kg"] == 6.0
 
 
-def test_plot_without_cycles_returns_empty_list(client, plot_b_id):
-    """Plot B existe pero no tiene ciclo: lista vacia, no 404."""
-    response = client.get(f"/api/v1/plots/{plot_b_id}/crop-cycles")
+def test_plot_without_cycles_returns_empty_list(client, other_plot_id):
+    """Un lote sin ciclo devuelve lista vacia, no 404."""
+    response = client.get(f"/api/v1/plots/{other_plot_id}/crop-cycles")
 
     assert response.status_code == 200
     assert response.json() == []
@@ -134,9 +134,9 @@ def test_overview_of_missing_plot_returns_404(client, crop_cycle_id):
 
 
 def test_overview_with_a_cycle_from_another_plot_returns_409(
-    client, plot_b_id, crop_cycle_id
+    client, other_plot_id, crop_cycle_id
 ):
     response = client.get(
-        f"/api/v1/plots/{plot_b_id}/overview", params={"crop_cycle_id": str(crop_cycle_id)}
+        f"/api/v1/plots/{other_plot_id}/overview", params={"crop_cycle_id": str(crop_cycle_id)}
     )
     assert response.status_code == 409
