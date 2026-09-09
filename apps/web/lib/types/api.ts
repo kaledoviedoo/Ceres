@@ -257,6 +257,46 @@ export interface PlotTimeline {
   moments: TimelineMoment[];
 }
 
+/**
+ * Una predicción emparejada con la cosecha real de su celda, si la hay.
+ *
+ * Los campos de cosecha van vacíos en DOS casos que no conviene confundir: que
+ * no exista cosecha registrada, y que la predicción sea POSTERIOR a ella. Los
+ * dos significan «no hay error medible aquí», que es la respuesta honesta.
+ */
+export interface PerformanceEntry {
+  prediction_id: string;
+  /** Cuándo se EJECUTÓ el cálculo. */
+  predicted_at: string;
+  /** De qué momento HABLA la predicción. Es lo que la sitúa en el eje. */
+  as_of: string | null;
+  model_version: string;
+
+  projected_yield_kg: number;
+  projected_boxes: number;
+  estimated_loss_percentage: number;
+  risk_level: RiskLevel;
+
+  harvest_id: string | null;
+  harvested_at: string | null;
+  actual_yield_kg: number | null;
+  actual_boxes: number | null;
+
+  /** |predicho − real| en kg. `null` mientras no exista cosecha. */
+  absolute_error_kg: number | null;
+  /** `null` si no hay cosecha o si el real es 0: no se inventa un porcentaje. */
+  percentage_error: number | null;
+}
+
+/** Respuesta de `GET /cells/{id}/performance`. */
+export interface CellPerformance {
+  cell_id: string;
+  cell_code: string;
+  crop_cycle_id: string;
+  /** Más reciente primero. Con `as_of`, exactamente una o ninguna. */
+  entries: PerformanceEntry[];
+}
+
 // --- Predicciones ------------------------------------------------------------
 
 /**

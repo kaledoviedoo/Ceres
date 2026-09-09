@@ -22,6 +22,7 @@ del que habla.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -41,8 +42,24 @@ def get_cell_performance(
     session: Session,
     cell_id: uuid.UUID,
     crop_cycle_id: uuid.UUID | None = None,
+    as_of: datetime | None = None,
 ) -> CellPerformance:
-    """Historial de la celda con el error de cada prediccion, mas reciente primero."""
+    """Historial de la celda con el error de cada prediccion, mas reciente primero.
+
+    `as_of` FILTRA el historial al momento pedido; no recalcula nada. Lo que
+    devuelve este servicio es lo que CERES dijo en su dia, y eso vive en
+    `predictions`: rederivarlo dejaria que la respuesta cambiara al cambiar el
+    modelo, y entonces no seria un historial.
+
+    Que el filtro sea sobre `as_of` y no sobre `created_at` es la misma
+    distincion de siempre: se pide el momento del que HABLA la prediccion, no
+    cuando se ejecuto el calculo.
+
+    LA COSECHA NO SE FILTRA. Es la misma celda y el mismo ciclo, asi que el
+    rendimiento real no depende del momento desde el que se mire; lo que cambia
+    es la prediccion con la que se compara. Por eso el filtro se aplica solo a
+    la consulta de predicciones.
+    """
     cell = get_cell(session, cell_id)
 
     prediction_query = select(Prediction).where(Prediction.cell_id == cell_id)
@@ -50,6 +67,8 @@ def get_cell_performance(
     if crop_cycle_id is not None:
         prediction_query = prediction_query.where(Prediction.crop_cycle_id == crop_cycle_id)
         harvest_query = harvest_query.where(Harvest.crop_cycle_id == crop_cycle_id)
+    if as_of is not None:
+        prediction_query = prediction_query.where(Prediction.as_of == as_of)
 
     # Ordenadas por el momento del que HABLAN, no por cuando se ejecutaron: es
     # lo que hace que la lista se lea como una serie y no como un registro de

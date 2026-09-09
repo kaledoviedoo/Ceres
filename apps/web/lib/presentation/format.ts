@@ -46,6 +46,20 @@ export function formatDateTime(iso: string): string {
 }
 
 /**
+ * Solo la fecha, sin hora.
+ *
+ * Para `as_of`: la hora no aporta nada —los momentos del escenario caen todos a
+ * las 12:00 UTC— y en un eje de gráfico ocupa el doble sin decir más.
+ */
+export function formatDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat(LOCALE, { dateStyle: "medium", timeZone: "UTC" }).format(
+    date,
+  );
+}
+
+/**
  * Cambio relativo respecto a 1.0, con signo.
  *
  * Es como se leen los factores explicativos: `soil_factor: 1.061` -> "+6.1 %".
