@@ -22,11 +22,11 @@
  */
 
 import { useFrame, useThree } from "@react-three/fiber";
-import { useImperativeHandle, useMemo, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, type RefObject } from "react";
 import { Vector3 } from "three";
 
-import { formatScaleLabel, scaleBar } from "@/lib/presentation/scale";
-import { gridToWorld } from "@/lib/terrain/coords";
+import { SCALE_STEPS_M, formatScaleLabel, scaleBar } from "@/lib/presentation/scale";
+import { gridCenter, gridToWorld, type PlotGrid } from "@/lib/terrain/coords";
 import type { ElevationField } from "@/lib/terrain/elevation";
 
 /** Distancia que se proyecta para medir la escala, en metros de terreno. Es el
@@ -34,8 +34,27 @@ import type { ElevationField } from "@/lib/terrain/elevation";
  *  ocupa un metro, y con eso se elige el peldano que se rotula. */
 const SCALE_METERS = 5;
 
-/** Ancho maximo de la barra. Por encima de esto invade el lienzo. */
-const SCALE_MAX_PX = 200;
+/**
+ * Aire que se le deja a la barra por su derecha, en pixeles.
+ *
+ * Es el mismo inset que tiene por la izquierda (`left-6`): la barra respira lo
+ * mismo por los dos lados en vez de quedarse pegada al panel. No es un tope de
+ * longitud —el tope sale de medir el hueco real—, es el margen de esa medida.
+ */
+const SCALE_GUTTER_PX = 24;
+
+/**
+ * Cuanto del ancho del mapa puede llegar a ocupar la barra.
+ *
+ * El hueco disponible dice donde CABE; esto dice hasta donde conviene. En una
+ * pantalla estrecha no hay nada a la derecha de la barra, asi que el hueco es la
+ * ventana entera y la barra crecia hasta cruzar dos tercios de la vista: una
+ * regla tumbada sobre el terreno en vez de una referencia al margen.
+ *
+ * Un tercio es una proporcion, no un numero de pixeles: se adapta a cualquier
+ * ancho, que es justo lo que el tope fijo de 200 px no hacia.
+ */
+const SCALE_MAX_FRACTION = 1 / 3;
 
 export interface OverlayHandle {
   /** Punto de la celda seleccionada en píxeles del lienzo. `null` la oculta. */
@@ -52,8 +71,7 @@ const scratchB = new Vector3();
 interface ProjectionBridgeProps {
   handle: RefObject<OverlayHandle | null>;
   field: ElevationField;
-  gridWidth: number;
-  gridHeight: number;
+  plot: PlotGrid;
   /** Celda seleccionada en coordenadas de malla, o `null`. */
   selected: { x: number; y: number } | null;
 }
@@ -61,21 +79,23 @@ interface ProjectionBridgeProps {
 export function ProjectionBridge({
   handle,
   field,
-  gridWidth,
-  gridHeight,
+  plot,
   selected,
 }: ProjectionBridgeProps) {
   const { camera, size } = useThree();
 
   /** Los dos extremos del segmento de referencia, en el centro del lote. */
   const scaleEnds = useMemo(() => {
-    const cx = (gridWidth - 1) / 2;
-    const cy = (gridHeight - 1) / 2;
-    const half = SCALE_METERS / 2;
+    const [cx, cy] = gridCenter(plot);
+    // El patrón mide METROS, así que el desplazamiento va en metros convertidos
+    // a celdas. Cuando la celda medía un metro las dos cifras coincidían y esta
+    // división era invisible; con celdas de 0,5 m, separarlos 2,5 CELDAS habría
+    // medido 1,25 m y la barra habría rotulado el doble de lo que dibuja.
+    const half = SCALE_METERS / 2 / plot.cellSizeM;
     const a: [number, number] = [cx - half, cy];
     const b: [number, number] = [cx + half, cy];
     return [a, b] as const;
-  }, [gridWidth, gridHeight]);
+  }, [plot]);
 
   useFrame(() => {
     const target = handle.current;
@@ -83,8 +103,8 @@ export function ProjectionBridge({
 
     // --- Escala: dos puntos separados por metros conocidos ------------------
     const [a, b] = scaleEnds;
-    const [ax, az] = gridToWorld(a[0], a[1], gridWidth, gridHeight);
-    const [bx, bz] = gridToWorld(b[0], b[1], gridWidth, gridHeight);
+    const [ax, az] = gridToWorld(a[0], a[1], plot);
+    const [bx, bz] = gridToWorld(b[0], b[1], plot);
 
     scratchA.set(ax, field.heightAt(a[0], a[1]), az).project(camera);
     scratchB.set(bx, field.heightAt(b[0], b[1]), bz).project(camera);
@@ -99,7 +119,7 @@ export function ProjectionBridge({
       return;
     }
 
-    const [wx, wz] = gridToWorld(selected.x, selected.y, gridWidth, gridHeight);
+    const [wx, wz] = gridToWorld(selected.x, selected.y, plot);
     scratchA.set(wx, field.heightAt(selected.x, selected.y), wz).project(camera);
 
     const cellX = ((scratchA.x + 1) / 2) * size.width;
@@ -130,6 +150,16 @@ export function ProjectionBridge({
  * al panel de verdad y no a una coordenada escrita a mano que se rompe al
  * cambiar el ancho.
  */
+/** Lo que hay que medir del DOM, y que solo cambia cuando cambia la ventana. */
+interface Layout {
+  /** `false` cuando la capa de anotación no genera caja: por debajo de `lg`. */
+  dibujable: boolean;
+  /** Dónde muere la línea guía, en píxeles del lienzo. `null` si no hay panel. */
+  destino: { x: number; y: number } | null;
+  /** Cuánto puede medir la barra de escala sin invadir nada, en píxeles. */
+  escalaMaxPx: number;
+}
+
 export function SceneOverlay({
   handle,
   hasSelection,
@@ -141,7 +171,186 @@ export function SceneOverlay({
   const lineRef = useRef<SVGPathElement>(null);
   const dotRef = useRef<SVGCircleElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
+  const barBoxRef = useRef<HTMLDivElement>(null);
+  const barRowRef = useRef<HTMLDivElement>(null);
   const barLabelRef = useRef<HTMLSpanElement>(null);
+
+  /*
+   * LA COMPOSICION SE MIDE CUANDO CAMBIA, NO CADA FOTOGRAMA.
+   *
+   * Las dos piezas de este archivo necesitan saber dónde están otras cajas del
+   * DOM: la línea guía apunta al inspector, y la barra de escala necesita saber
+   * cuánto hueco tiene. Antes eso se resolvía dentro de `setAnchor`, que corre
+   * en cada fotograma: orbitar hacía un `querySelector` y dos
+   * `getBoundingClientRect` sesenta veces por segundo para mover una línea de
+   * puntos.
+   *
+   * Y era trabajo tirado, porque nada de eso depende de la cámara. El inspector
+   * está donde está mientras no cambie el tamaño de la ventana. Lo que sí cambia
+   * cada fotograma —dónde cae la celda en pantalla— llega ya calculado desde la
+   * escena.
+   *
+   * Así que se mide una vez y se vuelve a medir cuando la caja de alguien
+   * cambia. Es seguro cachear precisamente porque la invalidación no depende de
+   * adivinar: la observa el navegador.
+   */
+  const layout = useRef<Layout | null>(null);
+
+  const medir = useCallback((): Layout | null => {
+    const root = rootRef.current;
+    const bar = barRef.current;
+    const cajaEl = barBoxRef.current;
+    const fila = barRowRef.current;
+    const label = barLabelRef.current;
+    if (!root || !bar || !cajaEl || !fila || !label) return null;
+
+    const panel = document.querySelector("aside.panel");
+    const panelBox = panel?.getBoundingClientRect() ?? null;
+
+    // --- Destino de la línea guía -------------------------------------------
+    // `getClientRects()` y no `offsetParent`: `offsetParent` es de `HTMLElement`
+    // y en SVG devuelve siempre nulo, lo que apagaba la línea también donde sí
+    // debía verse. Una lista vacía significa que el elemento no genera caja, que
+    // es exactamente `display: none` —lo que ocurre por debajo de `lg`.
+    const dibujable = root.getClientRects().length > 0;
+    const lienzo = root.getBoundingClientRect();
+    const destino =
+      dibujable && panelBox
+        ? { x: panelBox.left - lienzo.left - 10, y: panelBox.top - lienzo.top + 44 }
+        : null;
+
+    /*
+     * --- Hueco real de la barra de escala ----------------------------------
+     *
+     * Lo que acompaña a la barra en su fila es el hueco y el rótulo, y se MIDE
+     * con el rótulo más largo que puede llegar a escribir: midiéndolo con el
+     * actual, pasar de "2 m" a "100 m" ensancharía la caja por encima del hueco
+     * calculado.
+     *
+     * SE MIDE EL ROTULO, NO LA FILA. Restar el ancho de la barra al de su fila
+     * parece lo mismo y no lo es: la fila es un bloque y se estira hasta el
+     * ancho de la caja, que lo fija el pie "Escala · centro del lote" —más
+     * ancho que la fila—. Así que esa resta daba «lo que mide la caja menos lo
+     * que mide la barra», un número que CRECE cuando la barra encoge. Con eso el
+     * hueco disponible se realimentaba a sí mismo: la barra se quedaba clavada
+     * en el peldaño mínimo y ya no volvía a subir.
+     */
+    const previo = label.textContent;
+    label.textContent = formatScaleLabel(SCALE_STEPS_M[SCALE_STEPS_M.length - 1]!);
+    const rotulo = label.getBoundingClientRect().width;
+    label.textContent = previo;
+    const hueco = parseFloat(getComputedStyle(fila).columnGap) || 0;
+    const sobrecarga = rotulo + hueco;
+
+    // El acolchado se lee del estilo en vez de deducirse de las cajas: deducirlo
+    // solo funciona cuando la fila es el elemento más ancho, y aquí no lo es.
+    const estiloCaja = getComputedStyle(cajaEl);
+    const acolchado =
+      parseFloat(estiloCaja.paddingLeft) + parseFloat(estiloCaja.paddingRight);
+
+    const cajaBox = cajaEl.getBoundingClientRect();
+
+    /*
+     * EL LIMITE POR LA DERECHA SE MIDE, NO SE ESCRIBE.
+     *
+     * Antes había un tope de 200 px que no salía de ningún sitio: con la cámara
+     * en su posición por defecto obligaba a rotular 2 m cuando cabían 10, y en
+     * una ventana estrecha se habría metido igualmente debajo del cromo.
+     *
+     * Lo que de verdad limita la barra es la primera pieza de interfaz que tenga
+     * a su derecha COMPARTIENDO BANDA HORIZONTAL: el inspector a `lg`, el
+     * conmutador de capas cuando la banda de este es contigua. Se busca esa
+     * pieza en vez de nombrarla, así que mover un control no deja aquí un número
+     * desfasado.
+     *
+     * Se excluye lo que sigue al cursor —posicionado `fixed`, como la etiqueta
+     * de hover— porque no es composición: está donde esté el ratón en el
+     * instante de medir, y dejarlo entrar encogería la barra por un motivo que
+     * desaparece al mover la mano.
+     */
+    const vecinos = [...document.querySelectorAll<HTMLElement>(".floating, .panel")];
+    let limiteDerecho = document.documentElement.clientWidth;
+    for (const vecino of vecinos) {
+      if (vecino === cajaEl || vecino.contains(cajaEl) || cajaEl.contains(vecino)) continue;
+      const estilo = getComputedStyle(vecino);
+      if (estilo.position === "fixed" || estilo.display === "none") continue;
+      if (parseFloat(estilo.opacity) < 0.05 || estilo.visibility === "hidden") continue;
+
+      const box = vecino.getBoundingClientRect();
+      if (box.width < 2 || box.height < 2) continue;
+      // A su derecha y en su misma banda.
+      if (box.left <= cajaBox.left) continue;
+      if (box.bottom <= cajaBox.top || box.top >= cajaBox.bottom) continue;
+
+      limiteDerecho = Math.min(limiteDerecho, box.left);
+    }
+
+    return {
+      dibujable,
+      destino,
+      escalaMaxPx: Math.max(
+        0,
+        Math.min(
+          limiteDerecho - cajaBox.left - acolchado - sobrecarga - SCALE_GUTTER_PX,
+          document.documentElement.clientWidth * SCALE_MAX_FRACTION,
+        ),
+      ),
+    };
+  }, []);
+
+  /**
+   * Cuántos píxeles ocupó la última vez la distancia de referencia.
+   *
+   * Se guarda porque el peldaño rotulado no depende solo de la cámara: depende
+   * también del hueco disponible. Al estrechar la ventana el hueco encoge sin
+   * que la cámara se mueva, y con `frameloop="demand"` puede no correr ni un
+   * fotograma más. Sin esto, la barra se quedaba rotulando una distancia que ya
+   * no cabía.
+   */
+  const ultimaMedida = useRef<number | null>(null);
+
+  const pintarEscala = useCallback(() => {
+    const bar = barRef.current;
+    const label = barLabelRef.current;
+    const pixels = ultimaMedida.current;
+    if (!bar || !label || pixels === null) return;
+
+    // Sin medida del hueco no se rotula nada: una barra dibujada contra un
+    // máximo inventado podría salirse o quedarse en el peldaño mínimo, y las dos
+    // cosas son peores que esperar.
+    const caja = (layout.current ??= medir());
+    if (!caja) return;
+
+    const barra = scaleBar(pixels / SCALE_METERS, caja.escalaMaxPx);
+    if (!barra) {
+      bar.style.width = "0px";
+      label.textContent = "";
+      return;
+    }
+
+    // El mayor peldaño que cabe. Al acercarse, la barra no se recorta: pasa a
+    // rotular una distancia menor, y lo que se dibuja sigue siendo exactamente
+    // lo que mide esa distancia sobre el terreno.
+    bar.style.width = `${barra.pixels}px`;
+    label.textContent = formatScaleLabel(barra.meters);
+  }, [medir]);
+
+  useEffect(() => {
+    layout.current = medir();
+    pintarEscala();
+
+    // El navegador avisa de los cambios de caja; nadie tiene que adivinarlos.
+    // Se vigila la raíz del documento —cambiar el tamaño de la ventana— y el
+    // propio inspector, que cambia de ancho al cruzar un breakpoint.
+    const observer = new ResizeObserver(() => {
+      layout.current = medir();
+      pintarEscala();
+    });
+    observer.observe(document.documentElement);
+    const panel = document.querySelector("aside.panel");
+    if (panel) observer.observe(panel);
+    return () => observer.disconnect();
+  }, [medir, pintarEscala]);
 
   useImperativeHandle(
     handle,
@@ -152,30 +361,17 @@ export function SceneOverlay({
         const root = rootRef.current;
         if (!line || !dot || !root) return;
 
-        // Por debajo de `lg` la anotacion no se dibuja: sin panel al este no hay
-        // nada a lo que apuntar. Se comprueba aqui, y no solo con CSS, para no
-        // buscar el panel y medirlo en cada fotograma mientras se orbita.
-        //
-        // `getClientRects()` y no `offsetParent`: `offsetParent` es de
-        // `HTMLElement`, no existe en SVG, y devolvia siempre nulo — apagaba la
-        // linea tambien donde si debia verse. Una lista vacia significa que el
-        // elemento no genera caja, que es exactamente `display: none`.
-        if (root.getClientRects().length === 0) return;
+        const caja = (layout.current ??= medir());
+        // Sin panel al este no hay nada a lo que apuntar: por debajo de `lg` la
+        // línea guía no se dibuja.
+        if (!caja || !caja.dibujable || !caja.destino) return;
 
         if (!visible || !hasSelection) {
           root.style.opacity = "0";
           return;
         }
 
-        // El destino es el borde del inspector REAL, leído del DOM: escrito a
-        // mano se rompería en cuanto el panel cambiara de ancho.
-        const panel = document.querySelector("aside.panel");
-        const box = panel?.getBoundingClientRect();
-        const canvasBox = root.getBoundingClientRect();
-        if (!box) return;
-
-        const tx = box.left - canvasBox.left - 10;
-        const ty = box.top - canvasBox.top + 44;
+        const { x: tx, y: ty } = caja.destino;
 
         // Codo en angulo recto y no una diagonal: una linea quebrada se lee como
         // anotacion tecnica; una diagonal, como una flecha de presentacion.
@@ -196,25 +392,11 @@ export function SceneOverlay({
         root.style.opacity = "1";
       },
       setScale(pixels) {
-        const bar = barRef.current;
-        const label = barLabelRef.current;
-        if (!bar || !label) return;
-
-        // El mayor peldano que cabe. Al acercarse, la barra no se recorta: pasa
-        // a rotular una distancia menor, y lo que se dibuja sigue siendo
-        // exactamente lo que mide esa distancia sobre el terreno.
-        const barra = scaleBar(pixels / SCALE_METERS, SCALE_MAX_PX);
-        if (!barra) {
-          bar.style.width = "0px";
-          label.textContent = "";
-          return;
-        }
-
-        bar.style.width = `${barra.pixels}px`;
-        label.textContent = formatScaleLabel(barra.meters);
+        ultimaMedida.current = pixels;
+        pintarEscala();
       },
     }),
-    [hasSelection],
+    [hasSelection, medir, pintarEscala],
   );
 
   return (
@@ -245,10 +427,14 @@ export function SceneOverlay({
           haya leído un mapa. */}
       {/* Se mantiene en TODOS los anchos: en una vista de terreno la escala no
           es cromo opcional. Por debajo de `lg` sube para librar la hoja
-          inferior y los controles de cámara. */}
-      <div className="pointer-events-none absolute bottom-[calc(45dvh+8.5rem)] left-6 z-20 lg:bottom-[12.5rem]">
-        <div className="floating rounded-lg px-3 py-2">
-          <div className="flex items-end gap-2">
+          inferior y los controles de cámara.
+
+          10,5rem y no 8,5: el selector de capas ocupa dos filas —los cuatro
+          botones y la línea de capas sin fuente— y a 640 de ancho su esquina
+          izquierda caía sobre esta barra. */}
+      <div className="pointer-events-none absolute bottom-[calc(45dvh+10.5rem)] left-6 z-20 lg:bottom-[12.5rem]">
+        <div ref={barBoxRef} className="floating rounded-lg px-3 py-2">
+          <div ref={barRowRef} className="flex items-end gap-2">
             <div className="pb-[3px]">
               <div
                 ref={barRef}

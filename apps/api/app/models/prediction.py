@@ -13,7 +13,9 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import CheckConstraint, Float, ForeignKey, Integer, String
+from datetime import datetime
+
+from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import RiskLevel
@@ -52,7 +54,18 @@ class Prediction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     #: Version del modelo que produjo este resultado, p.ej. "rule-based-v0.1".
-    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    #: DE QUE MOMENTO habla esta prediccion.
+    #:
+    #: No es lo mismo que `created_at`, que dice cuando se ejecuto. Dos
+    #: predicciones lanzadas hoy sobre el estado de marzo y el de mayo tienen el
+    #: mismo `created_at` y `as_of` distintos, y sin esta columna serian
+    #: indistinguibles: una serie ordenada por `created_at` mezclaria el orden de
+    #: ejecucion con el orden de los hechos.
+    #:
+    #: `None` = el estado base, sin fechar.
+    as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     projected_yield_kg: Mapped[float] = mapped_column(Float, nullable=False)
     projected_boxes: Mapped[int] = mapped_column(Integer, nullable=False)

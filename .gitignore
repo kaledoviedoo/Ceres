@@ -28,8 +28,13 @@ desktop.ini
 
 # Ajustes locales de Claude Code (por maquina)
 .claude/settings.local.json
+# Config local de servidores de desarrollo: lleva rutas absolutas de la maquina.
+.claude/launch.json
 
 # Next.js
 apps/web/.next/
 apps/web/next-env.d.ts
 apps/web/.env.local
+
+# Cache incremental de TypeScript: se regenera en cada build.
+*.tsbuildinfo

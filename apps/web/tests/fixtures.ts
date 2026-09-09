@@ -6,8 +6,10 @@
  * pueda afirmar que la interfaz muestra exactamente lo que dice el backend.
  */
 
+import type { PlotGrid } from "@/lib/terrain/coords";
 import type { TerrainCell } from "@/lib/terrain/types";
 import type {
+  CellProvenance,
   CellDetail,
   CellOverview,
   CropCycle,
@@ -132,6 +134,18 @@ export const prediction: Prediction = {
     base_yield_factor: 0.9872,
   },
   created_at: "2026-08-30T21:44:08Z",
+  // Las entradas con las que se ejecutó el motor. La API las publica desde esta
+  // fase; sin ellas dos puntos de una serie no se pueden comparar.
+  inputs: {
+    elevation_m: 1180.42,
+    slope_deg: 2.03,
+    soil_quality: 0.7401,
+    plant_density: 2.4812,
+    health_factor: 0.8903,
+    base_yield_factor: 1.0143,
+  },
+  // De qué momento habla. `created_at` dice cuándo se ejecutó.
+  as_of: "2026-09-04T21:58:00Z",
 };
 
 /** Malla completa de 400 celdas con los tres niveles de riesgo presentes. */
@@ -184,6 +198,62 @@ export function buildTerrainCells(): TerrainCell[] {
       ...cell,
       elevation_m: 1180 + rise - dip,
       slope_deg: 4 + (cell.x % 5),
+      // Suelo y sanidad NO son función del nivel de riesgo: en el lote real los
+      // rangos se solapan entre niveles, y un fixture correlacionado haría pasar
+      // tests que en producción fallarían.
+      soil_quality: 0.12 + ((cell.x * 7 + cell.y * 3) % 71) / 100,
+      health_factor: 0.05 + ((cell.x * 11 + cell.y * 5) % 89) / 100,
     };
   });
 }
+
+/**
+ * Una malla de lote para los tests.
+ *
+ * El lado por defecto es 1 m porque es lo que sirve la API hoy: los tests que no
+ * hablan de escala siguen describiendo el dataset real. Los que SI hablan de
+ * escala lo pasan explícitamente, que es justo el punto —el tamaño de la celda
+ * dejó de ser algo que se sobrentiende—.
+ */
+export function malla(width: number, height: number, cellSizeM = 1): PlotGrid {
+  return { width, height, cellSizeM };
+}
+
+/**
+ * El bloque de procedencia tal como lo sirve `GET /plots/{id}/cells`.
+ *
+ * Copiado de la respuesta real, no inventado: el dataset actual lo genera
+ * `app.core.synthetic.field` y la API lo declara así.
+ */
+export const cellProvenance: CellProvenance = {
+  dataset: {
+    kind: "synthetic",
+    generator: "app.core.synthetic.field",
+    note: health.disclaimer,
+    representation:
+      "Malla de 1 m2 por celda sobre un campo sintetico espacialmente " +
+      "correlacionado. La resolucion nominal es de 1 m; el detalle real del " +
+      "campo esta a unos 5 m. No hay informacion medida de cada metro cuadrado.",
+  },
+  elevation: {
+    kind: "synthetic",
+    field_name: "elevation_m",
+    units: "m",
+    nominal_resolution_m: 1,
+    effective_resolution_m: 5,
+    vertical_datum: "unknown",
+    method: "gradiente sur-norte + ruido de reticula suavizado + hondonada gaussiana",
+  },
+  slope: {
+    kind: "derived",
+    field_name: "slope_deg",
+    units: "deg",
+    derived_from: ["elevation_m"],
+    method: "numpy.gradient sobre elevation_m",
+  },
+  agronomic: {
+    kind: "synthetic",
+    field_names: ["soil_quality", "plant_density", "health_factor", "base_yield_factor"],
+    method: "gradientes este-oeste + ruido de reticula suavizado + foco de estres localizado",
+  },
+};

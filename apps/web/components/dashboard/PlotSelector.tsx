@@ -26,7 +26,11 @@ export function PlotSelector({ plots, selectedPlotId, onSelect }: PlotSelectorPr
   if (plots.length <= 1) return null;
 
   return (
-    <div className="floating w-[9.5rem] rounded-lg p-1.5">
+    // El tope evita que una finca con muchos lotes empuje la lista hasta el
+    // panel de reparto, que ocupa esta misma columna más abajo. 14rem deja los
+    // cuatro de La Cuadrícula —que miden 12— sin barra de desplazamiento: con
+    // el tope justo en 12 aparecía una barra que no hacía falta.
+    <div className="floating max-h-[14rem] w-[9.5rem] overflow-y-auto rounded-lg p-1.5">
       <p className="eyebrow px-1.5 pb-1.5 pt-0.5">Lote</p>
       <div role="group" aria-label="Lote" className="space-y-0.5">
         {plots.map((plot) => {

@@ -1,5 +1,8 @@
 /**
- * La rama analítica: métricas → color, percentiles y fronteras.
+ * La rama analítica: métricas → color y fronteras.
+ *
+ * Los percentiles se fueron a `statistics.test.ts` con el resto de la
+ * estadística descriptiva: aquí se prueba la traducción a imagen.
  *
  * El invariante que protege este archivo es el espejo del de la geometría:
  * ninguna de estas funciones sabe qué es una elevación, y ninguna decide dónde
@@ -12,11 +15,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { cellColor, type MetricRange } from "@/lib/presentation/risk";
-import { metricRgb, parseColor, percentile, zoneBorders, zoneContour } from "@/lib/terrain/analysis";
+import { cellsRgb, parseColor, zoneBorders, zoneContour } from "@/lib/terrain/analysis";
 import type { CellOverview, RiskLevel } from "@/lib/types/api";
-
-const RANGE: MetricRange = { min: 0, max: 1 };
 
 function base(overrides: Partial<CellOverview>): CellOverview {
   return {
@@ -47,41 +47,24 @@ describe("color del dato", () => {
     base({ cell_id: "b", x: 1, y: 0, risk_level: "low", risk_score: 0.1 }),
   ];
 
-  it("usa el mapeo de `risk.ts`, no uno propio", () => {
-    const rgb = metricRgb(cells, 2, 1, "risk", RANGE);
-    expect([rgb[0], rgb[1], rgb[2]]).toEqual(parseColor(cellColor(cells[0]!, "risk", RANGE)));
-    expect([rgb[3], rgb[4], rgb[5]]).toEqual(parseColor(cellColor(cells[1]!, "risk", RANGE)));
+  it("coloca el color que le den, sin decidir ninguno", () => {
+    // El módulo no sabe qué métrica se pinta: recibe una función de color y la
+    // coloca en la rejilla. Es lo que permite añadir una capa sin tocarlo.
+    const colorOf = (cell: { risk_level: string }) =>
+      cell.risk_level === "high" ? "#ef4444" : "rgb(34, 197, 94)";
+    const rgb = cellsRgb(cells, 2, 1, colorOf);
+    expect([rgb[0], rgb[1], rgb[2]]).toEqual(parseColor(colorOf(cells[0]!)));
+    expect([rgb[3], rgb[4], rgb[5]]).toEqual(parseColor(colorOf(cells[1]!)));
   });
 
-  it("entiende las dos formas en que `risk.ts` devuelve color", () => {
+  it("entiende las dos formas de escribir un color", () => {
     // Niveles discretos en hex, rampa continua en rgb().
     expect(parseColor("#22c55e")).toEqual([34, 197, 94]);
     expect(parseColor("rgb(239, 68, 68)")).toEqual([239, 68, 68]);
   });
 
   it("coloca una entrada por celda de la malla", () => {
-    expect(metricRgb(cells, 2, 1, "risk", RANGE)).toHaveLength(2 * 1 * 3);
-  });
-});
-
-describe("percentiles", () => {
-  it("sitúa un valor dentro del reparto del lote", () => {
-    // Es lo que convierte "18,1 %" en una lectura: sin el reparto, una cifra
-    // suelta no dice si es buena.
-    const valores = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    expect(percentile(valores, 1)).toBeCloseTo(0, 6);
-    expect(percentile(valores, 6)).toBeCloseTo(0.5, 6);
-    expect(percentile(valores, 11)).toBeCloseTo(1, 6);
-  });
-
-  it("no explota con un lote vacío", () => {
-    expect(percentile([], 5)).toBe(0);
-  });
-
-  it("es un recuento, no un umbral nuevo", () => {
-    // Solo cuenta cuántos quedan por debajo. No hay ninguna constante de
-    // dominio escondida aquí.
-    expect(percentile([10, 20, 30], 20)).toBeCloseTo(1 / 3, 6);
+    expect(cellsRgb(cells, 2, 1, () => "#ffffff")).toHaveLength(2 * 1 * 3);
   });
 });
 

@@ -8,6 +8,9 @@ from sqlalchemy import text
 from app import __version__
 from app.api.deps import SessionDep
 from app.core.prediction import MODEL_VERSION
+# La misma frase que respalda `provenance.dataset.kind`: una sola fuente para
+# las dos formas de decir lo mismo.
+from app.core.provenance import DISCLAIMER
 from app.schemas.common import CeresORMSchema
 
 router = APIRouter(tags=["health"])
@@ -20,13 +23,6 @@ class HealthResponse(CeresORMSchema):
     database: str
     #: Recordatorio permanente en el contrato, no solo en la documentacion.
     disclaimer: str
-
-
-DISCLAIMER = (
-    "DEMO / SYNTHETIC DATA. El motor de prediccion es un modelo experimental y "
-    "demostrativo sobre datos sinteticos, no una prediccion agronomica "
-    "cientificamente validada."
-)
 
 
 @router.get("/health", response_model=HealthResponse)

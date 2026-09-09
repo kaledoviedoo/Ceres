@@ -32,28 +32,68 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { CELL_SIZE } from "@/lib/terrain/coords";
+
+
+import type { PlotGrid } from "@/lib/terrain/coords";
+
+/**
+ * El vocabulario CERRADO de procedencia, el mismo que declara la API.
+ *
+ * Antes esto era `"synthetic" | "dem" | "lidar"`, que mezclaba dos preguntas:
+ * de dónde sale el dato y en qué formato viene. Un DEM puede ser una medición o
+ * el resultado de un modelo, y "lidar" es un instrumento, no una procedencia.
+ *
+ * `unknown` es el valor por defecto en toda la cadena. Nunca `measured`: callar
+ * tiene que producir "no lo sé", no "lo medí".
+ */
+export type ProvenanceKind =
+  | "measured"
+  | "derived"
+  | "estimated"
+  | "synthetic"
+  | "unknown";
 
 /**
  * De dónde salió la elevación. Viaja con el campo hasta la pantalla.
  *
- * Cuando entre un DEM real, esto es lo único que cambia en la interfaz: la nota
- * al pie deja de decir "sintético" y pasa a decir la resolución del ráster.
+ * YA NO SE SUPONE: la sirve `GET /plots/{id}/cells` en su bloque `provenance`.
+ * Hasta esta fase el frontend la afirmaba por su cuenta, y acertaba de
+ * casualidad —nadie se la había dicho—.
  */
 export interface ElevationProvenance {
-  kind: "synthetic" | "dem" | "lidar";
+  kind: ProvenanceKind;
   /** Texto corto para la interfaz. */
   label: string;
   /** Resolución NOMINAL: separación entre muestras almacenadas. */
   nominalResolutionM: number;
   /**
-   * Resolución EFECTIVA: a qué escala hay variación real. En el campo sintético
-   * es mucho mayor que la nominal, y ocultarlo sería fingir precisión.
+   * Resolución EFECTIVA: a qué escala hay variación real. Es OTRO número, no se
+   * deduce de la nominal, y `null` cuando nadie la ha medido: fingir que se
+   * conoce es exactamente lo que este campo existe para impedir.
    */
-  effectiveResolutionM: number;
-  /** `false` para datos generados. Nunca se muestra un sintético como medición. */
-  measured: boolean;
+  effectiveResolutionM: number | null;
+  /**
+   * Si describe una medición de campo.
+   *
+   * Derivado de `kind`, no declarado aparte: dos campos que pueden contradecirse
+   * acaban contradiciéndose.
+   */
+  readonly measured: boolean;
 }
+
+/** ¿Es una medición? Una sola definición para toda la interfaz. */
+export function isMeasured(kind: ProvenanceKind): boolean {
+  return kind === "measured";
+}
+
+/** Cómo se nombra cada procedencia en la interfaz. */
+export const PROVENANCE_LABEL: Record<ProvenanceKind, string> = {
+  measured: "medida",
+  derived: "derivada",
+  estimated: "estimada",
+  synthetic: "sintética",
+  unknown: "de origen no declarado",
+};
 
 /**
  * Fuente de elevación intercambiable.
@@ -85,11 +125,48 @@ interface ElevationSample {
  * Es la única implementación que existe hoy. Declara su procedencia honestamente
  * en vez de presentarse como un DEM.
  */
+/**
+ * PROCEDENCIA DESCONOCIDA — el único valor por defecto admisible.
+ *
+ * Sustituye a `assumedProvenance`, que devolvía "sintética" por su cuenta. Aquel
+ * supuesto era correcto y aun así estaba mal: nadie se lo había dicho al
+ * frontend, y el día que el dato hubiera cambiado la interfaz habría seguido
+ * afirmando lo mismo con la misma seguridad.
+ *
+ * Ahora la procedencia la declara `GET /plots/{id}/cells`. Cuando NO llega
+ * —backend antiguo, respuesta incompleta— se usa esta, que no afirma nada. Es la
+ * dirección segura: `unknown` hace que la interfaz diga "origen no declarado",
+ * mientras que cualquier otro valor por omisión pondría en pantalla una
+ * afirmación que nadie ha hecho.
+ */
+export function unknownProvenance(sampleSpacingM: number): ElevationProvenance {
+  return {
+    kind: "unknown",
+    label: "Elevación de origen no declarado",
+    // Lo único que sigue siendo cierto sin que nadie lo declare: las muestras
+    // están donde están las celdas. Es geometría del propio dato, no una
+    // afirmación sobre su origen.
+    nominalResolutionM: sampleSpacingM,
+    // Nadie la ha medido. `null` y no un número prudente: un número aquí se lee
+    // como una medición.
+    effectiveResolutionM: null,
+    measured: false,
+  };
+}
+
 export function gridElevationSource(
   cells: ElevationSample[],
-  width: number,
-  height: number,
+  plot: PlotGrid,
+  /**
+   * Procedencia DECLARADA por el origen del dato.
+   *
+   * Sin ella no se inventa ninguna: se usa `unknownProvenance`, que dice que no
+   * se sabe. Es el único valor por defecto que no pone una afirmación ajena en
+   * boca del sistema.
+   */
+  provenance: ElevationProvenance = unknownProvenance(plot.cellSizeM),
 ): ElevationSource {
+  const { width, height } = plot;
   let min = Infinity;
   let max = -Infinity;
   for (const cell of cells) {
@@ -130,15 +207,7 @@ export function gridElevationSource(
       const cy = Math.min(height - 1, Math.max(0, y));
       return min + (offsets[cy * width + cx] ?? 0);
     },
-    provenance: {
-      kind: "synthetic",
-      label: "Elevación sintética",
-      nominalResolutionM: CELL_SIZE,
-      // Medido: cuatro componentes principales reconstruyen el 99,99 % de un
-      // campo de 20 m de lado. La variación real ocurre a esta escala.
-      effectiveResolutionM: 5,
-      measured: false,
-    },
+    provenance,
   };
 }
 
@@ -242,7 +311,19 @@ function smoothstep(t: number): number {
  * píxel.
  */
 export class ElevationField {
-  constructor(readonly source: ElevationSource) {}
+  /**
+   * @param source  de dónde salen los metros.
+   * @param cellSizeM  cuántos METROS hay entre dos coordenadas de malla
+   *   consecutivas. Hace falta aquí y no en la fuente: la fuente se indexa por
+   *   celda del lote, así que el paso entre índices es siempre el lado de la
+   *   celda, venga la elevación de donde venga. Es lo que convierte una
+   *   diferencia de alturas en una PENDIENTE, y sin él el sombreado de un lote
+   *   de celdas de 0,5 m saldría a la mitad de su inclinación real.
+   */
+  constructor(
+    readonly source: ElevationSource,
+    readonly cellSizeM: number,
+  ) {}
 
   get provenance(): ElevationProvenance {
     return this.source.provenance;
@@ -302,13 +383,18 @@ export class ElevationField {
      * amplifica esas juntas y el terreno salía con bandas paralelas —una por
      * fila de celdas— que no existen en el dato.
      *
-     * Midiendo la pendiente sobre un metro entero, la medida promedia el salto
+     * Midiendo la pendiente sobre una celda entera, la medida promedia el salto
      * en vez de tropezar con él, y las bandas desaparecen sin perder relieve:
      * la variación real del campo ocurre a unos 5 m.
+     *
+     * `h` está en CELDAS y el denominador en METROS. Son unidades distintas a
+     * propósito: el estencil se elige sobre la rejilla del dato y la pendiente
+     * es una magnitud física.
      */
     const h = 1;
-    const dzdx = (this.metersAt(gx + h, gy) - this.metersAt(gx - h, gy)) / (2 * h * CELL_SIZE);
-    const dzdy = (this.metersAt(gx, gy + h) - this.metersAt(gx, gy - h)) / (2 * h * CELL_SIZE);
+    const paso = 2 * h * this.cellSizeM;
+    const dzdx = (this.metersAt(gx + h, gy) - this.metersAt(gx - h, gy)) / paso;
+    const dzdy = (this.metersAt(gx, gy + h) - this.metersAt(gx, gy - h)) / paso;
 
     // Se exagera la pendiente igual que la altura: si no, con 3 m de desnivel el
     // sombreado sería tan tenue que no aportaría nada.

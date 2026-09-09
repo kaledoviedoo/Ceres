@@ -23,7 +23,14 @@ import { RISK_COLORS } from "@/lib/presentation/risk";
 import type { TerrainCell } from "@/lib/terrain/types";
 
 export interface HoverLabelHandle {
-  show: (cell: TerrainCell, clientX: number, clientY: number) => void;
+  /**
+   * `reading` es el valor de la CAPA ACTIVA ya formateado, o `null` cuando la
+   * capa es rendimiento o pérdida y ya sale en la línea de siempre.
+   *
+   * Sin esto, con Suelo o Sanidad activas el valor pintado solo existía en el
+   * color: quien no distinga los tonos no tenía ninguna forma de leerlo.
+   */
+  show: (cell: TerrainCell, reading: string | null, clientX: number, clientY: number) => void;
   hide: () => void;
 }
 
@@ -31,14 +38,19 @@ export function HoverLabel({ handle }: { handle: RefObject<HoverLabelHandle | nu
   const rootRef = useRef<HTMLDivElement>(null);
   const codeRef = useRef<HTMLSpanElement>(null);
   const metricRef = useRef<HTMLSpanElement>(null);
+  const layerRef = useRef<HTMLSpanElement>(null);
   const levelRef = useRef<HTMLSpanElement>(null);
 
   useImperativeHandle(handle, () => ({
-    show(cell, clientX, clientY) {
+    show(cell, reading, clientX, clientY) {
       const root = rootRef.current;
       if (!root) return;
 
       if (codeRef.current) codeRef.current.textContent = cell.cell_code;
+      if (layerRef.current) {
+        layerRef.current.textContent = reading ?? "";
+        layerRef.current.hidden = reading === null;
+      }
       if (metricRef.current) {
         metricRef.current.textContent = `${formatKg(cell.projected_yield_kg)} · ${formatPercent(
           cell.estimated_loss_percentage,
@@ -66,6 +78,7 @@ export function HoverLabel({ handle }: { handle: RefObject<HoverLabelHandle | nu
       className="floating pointer-events-none fixed left-0 top-0 z-30 rounded-xl px-3 py-2 opacity-0 transition-opacity duration-100"
     >
       <span ref={codeRef} className="tabular block text-xs text-ink" />
+      <span ref={layerRef} className="tabular block text-[11px] text-ink-soft" hidden />
       <span ref={metricRef} className="tabular block text-[11px] text-muted" />
       <span ref={levelRef} className="eyebrow block" />
     </div>

@@ -42,9 +42,15 @@ const FACTOR_LABELS: Record<keyof Prediction["factors"], string> = {
 interface PredictionPanelProps {
   cellId: string;
   cropCycleId: string | null;
+  /**
+   * El instante que se está mirando, para que lo guardado coincida con lo visto.
+   *
+   * `null` deja que la API use "ahora", que es lo que hacía siempre.
+   */
+  asOf: string | null;
 }
 
-export function PredictionPanel({ cellId, cropCycleId }: PredictionPanelProps) {
+export function PredictionPanel({ cellId, cropCycleId, asOf }: PredictionPanelProps) {
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +60,13 @@ export function PredictionPanel({ cellId, cropCycleId }: PredictionPanelProps) {
     setIsRunning(true);
     setError(null);
     try {
-      setPrediction(await ceresApi.createPrediction({ cell_id: cellId, crop_cycle_id: cropCycleId }));
+      setPrediction(
+        await ceresApi.createPrediction({
+          cell_id: cellId,
+          crop_cycle_id: cropCycleId,
+          ...(asOf ? { as_of: asOf } : {}),
+        }),
+      );
     } catch (cause) {
       setError(describeError(cause));
     } finally {

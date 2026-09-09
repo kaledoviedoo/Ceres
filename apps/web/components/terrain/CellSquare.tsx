@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Un cuadro de la malla: ~1 m² de terreno.
+ * Un cuadro de la malla: una celda del lote. Cuánto mide en metros lo dice
+ * `cell_size_m`, y esta vista no lo necesita.
  *
  * Es un `<button>` de verdad y no un `<div>` con onClick, para que la malla se
  * pueda recorrer con el teclado. Solo la celda enfocada está en el orden de
@@ -13,7 +14,7 @@
 import { memo } from "react";
 
 import { formatKg, formatPercent, formatScore } from "@/lib/presentation/format";
-import { RISK_COLORS, RISK_PATTERNS, type ViewMode } from "@/lib/presentation/risk";
+import { RISK_COLORS, RISK_PATTERNS } from "@/lib/presentation/risk";
 import type { ZoneBorders } from "@/lib/terrain/analysis";
 import type { CellOverview } from "@/lib/types/api";
 
@@ -23,7 +24,17 @@ const ZONE_WIDTH = 2;
 interface CellSquareProps {
   cell: CellOverview;
   color: string;
-  viewMode: ViewMode;
+  /** Si la capa lleva trama además de color. Solo la de niveles discretos. */
+  patterned: boolean;
+  /**
+   * El valor de la CAPA ACTIVA ya formateado, o `null` si ya sale abajo.
+   *
+   * Va en el nombre accesible del cuadro. Sin esto, con Suelo o Sanidad activas
+   * el dato pintado solo existía en el color, que es justo lo que no puede
+   * pasar: verde, ámbar y rojo son los tonos que pierde un daltonismo
+   * rojo-verde.
+   */
+  reading: string | null;
   isSelected: boolean;
   isHovered: boolean;
   isFocusTarget: boolean;
@@ -36,7 +47,8 @@ interface CellSquareProps {
 function CellSquareComponent({
   cell,
   color,
-  viewMode,
+  patterned,
+  reading,
   isSelected,
   isHovered,
   isFocusTarget,
@@ -48,6 +60,7 @@ function CellSquareComponent({
   // un panel flotante, pero el dato que muestra es el mismo.
   const description = [
     cell.cell_code,
+    ...(reading ? [reading] : []),
     `(${cell.x}, ${cell.y})`,
     `${formatKg(cell.projected_yield_kg)}`,
     `pérdida ${formatPercent(cell.estimated_loss_percentage)}`,
@@ -58,7 +71,7 @@ function CellSquareComponent({
   // rojo son justo los ejes que pierde un daltonismo rojo-verde, así que el
   // nivel no puede comunicarse solo con el tono. Solo en modo riesgo: en los
   // modos continuos el valor es una rampa y la trama sería ruido.
-  const pattern = viewMode === "risk" ? RISK_PATTERNS[cell.risk_level] : undefined;
+  const pattern = patterned ? RISK_PATTERNS[cell.risk_level] : undefined;
 
   // Contorno de zona, con la misma frontera y el mismo color que en relieve.
   // Hueso y no rojo: sobre celdas rojas, un borde rojo no separa nada.

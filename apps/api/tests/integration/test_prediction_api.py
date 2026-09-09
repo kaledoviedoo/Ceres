@@ -10,7 +10,12 @@ import uuid
 
 from sqlalchemy import func, select
 
-from app.core.prediction import CropParameters, PredictionInput, predict_from_input
+from app.core.prediction import (
+    MODEL_VERSION,
+    CropParameters,
+    PredictionInput,
+    predict_from_input,
+)
 from app.models import Prediction
 
 MISSING_ID = "00000000-0000-0000-0000-000000000000"
@@ -56,7 +61,13 @@ def test_prediction_respects_the_domain_ranges(client, cell_id, crop_cycle_id):
     assert 0 <= body["estimated_loss_percentage"] <= 100
     assert 0 <= body["risk_score"] <= 1
     assert body["risk_level"] in {"low", "medium", "high"}
-    assert body["model_version"] == "rule-based-v0.1"
+    # Version COMPUESTA: motor + modelo de impacto. Una prediccion guardada pasa
+    # por los dos —el estado se deriva de las observaciones antes de predecir—,
+    # asi que las dos versiones tienen que quedar registradas. `/health` y
+    # `/overview` siguen dando la del motor a secas porque ahi no interviene
+    # ninguna derivacion de estado.
+    assert body["model_version"] == "rule-based-v0.1+impact-v0"
+    assert body["model_version"].startswith(MODEL_VERSION)
 
 
 def test_prediction_exposes_the_five_explanatory_factors(client, cell_id, crop_cycle_id):
@@ -137,7 +148,7 @@ def test_prediction_is_persisted(client, session, cell_id, crop_cycle_id):
     stored = session.get(Prediction, uuid.UUID(body["id"]))
     assert stored is not None
     assert stored.projected_yield_kg == body["projected_yield_kg"]
-    assert stored.model_version == "rule-based-v0.1"
+    assert stored.model_version == "rule-based-v0.1+impact-v0"
 
 
 def test_each_call_adds_a_new_row_instead_of_overwriting(

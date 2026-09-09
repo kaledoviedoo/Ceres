@@ -20,13 +20,31 @@ def post_observation(client, cell_id, **overrides):
     return client.post("/api/v1/observations", json=payload)
 
 
+#: Fecha de la cosecha en estos tests, y un momento anterior del que puedan
+#: hablar las predicciones. Sin `as_of` anterior no hay error medible: una
+#: prediccion posterior a la cosecha no predijo nada.
+HARVEST_DATE = "2026-06-20"
+BEFORE_HARVEST = "2026-06-01T09:00:00+00:00"
+
+
+def post_prediction(client, cell_id, crop_cycle_id, as_of=BEFORE_HARVEST):
+    return client.post(
+        "/api/v1/predictions",
+        json={
+            "cell_id": str(cell_id),
+            "crop_cycle_id": str(crop_cycle_id),
+            "as_of": as_of,
+        },
+    )
+
+
 def post_harvest(client, cell_id, crop_cycle_id, **overrides):
     payload = {
         "cell_id": str(cell_id),
         "crop_cycle_id": str(crop_cycle_id),
         "actual_yield_kg": 16.2,
         "actual_boxes": 3,
-        "harvested_at": "2026-06-20",
+        "harvested_at": HARVEST_DATE,
     }
     payload.update(overrides)
     return client.post("/api/v1/harvests", json=payload)
@@ -150,10 +168,7 @@ def test_harvests_of_missing_cell_return_404(client):
 
 
 def test_performance_is_empty_of_error_before_the_harvest(client, cell_id, crop_cycle_id):
-    client.post(
-        "/api/v1/predictions",
-        json={"cell_id": str(cell_id), "crop_cycle_id": str(crop_cycle_id)},
-    )
+    post_prediction(client, cell_id, crop_cycle_id)
 
     body = client.get(f"/api/v1/cells/{cell_id}/performance").json()
 
@@ -166,10 +181,7 @@ def test_performance_is_empty_of_error_before_the_harvest(client, cell_id, crop_
 
 def test_full_cycle_predict_harvest_compare(client, cell_id, crop_cycle_id):
     """Paso 1 a 13 del criterio de exito del MVP, sin frontend."""
-    prediction = client.post(
-        "/api/v1/predictions",
-        json={"cell_id": str(cell_id), "crop_cycle_id": str(crop_cycle_id)},
-    ).json()
+    prediction = post_prediction(client, cell_id, crop_cycle_id).json()
 
     post_harvest(client, cell_id, crop_cycle_id, actual_yield_kg=5.0, actual_boxes=1)
 
@@ -194,10 +206,7 @@ def test_percentage_error_is_null_when_actual_yield_is_zero(
     client, cell_id, crop_cycle_id
 ):
     """No se inventa un porcentaje para una division imposible."""
-    client.post(
-        "/api/v1/predictions",
-        json={"cell_id": str(cell_id), "crop_cycle_id": str(crop_cycle_id)},
-    )
+    post_prediction(client, cell_id, crop_cycle_id)
     post_harvest(client, cell_id, crop_cycle_id, actual_yield_kg=0.0, actual_boxes=0)
 
     entry = client.get(f"/api/v1/cells/{cell_id}/performance").json()["entries"][0]
@@ -210,12 +219,13 @@ def test_percentage_error_is_null_when_actual_yield_is_zero(
 def test_every_prediction_is_compared_against_the_same_harvest(
     client, cell_id, crop_cycle_id
 ):
-    """El historial completo se evalua, no solo la ultima prediccion."""
-    for _ in range(3):
-        client.post(
-            "/api/v1/predictions",
-            json={"cell_id": str(cell_id), "crop_cycle_id": str(crop_cycle_id)},
-        )
+    """El historial completo se evalua, no solo la ultima prediccion.
+
+    Con una condicion que antes no estaba: solo las predicciones ANTERIORES a la
+    cosecha. Las tres de este test lo son.
+    """
+    for dia in ("2026-05-01", "2026-05-20", "2026-06-10"):
+        post_prediction(client, cell_id, crop_cycle_id, f"{dia}T09:00:00+00:00")
     post_harvest(client, cell_id, crop_cycle_id, actual_yield_kg=5.0, actual_boxes=1)
 
     entries = client.get(f"/api/v1/cells/{cell_id}/performance").json()["entries"]

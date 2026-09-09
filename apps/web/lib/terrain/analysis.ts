@@ -17,17 +17,20 @@
  *
  * Ninguna fórmula agronómica vive aquí. Comparar dos `risk_level` que el motor
  * ya decidió no es modelar: los umbrales están en `app/domain/units.py`.
+ *
+ * La estadística descriptiva —percentiles, cuantiles, reparto, coincidencia—
+ * vive en `statistics.ts`. Este módulo traduce dato a IMAGEN; aquel mide. Tener
+ * `percentile` en los dos sitios ya había empezado a duplicarse.
  */
 
-import { cellColor, type MetricRange, type ViewMode } from "@/lib/presentation/risk";
-import type { CellOverview, RiskLevel } from "@/lib/types/api";
+import type { RiskLevel } from "@/lib/types/api";
 
 // --- Color -------------------------------------------------------------------
 
 const HEX = /^#([0-9a-f]{6})$/i;
 const RGB = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i;
 
-/** `cellColor` devuelve CSS; aquí hace falta en componentes numéricos. */
+/** El color llega en CSS; aquí hace falta en componentes numéricos. */
 export function parseColor(css: string): [number, number, number] {
   const hex = HEX.exec(css);
   if (hex) {
@@ -39,46 +42,36 @@ export function parseColor(css: string): [number, number, number] {
   return [255, 255, 255];
 }
 
+/** Lo mínimo que hace falta para colocar un color en la rejilla. */
+interface Placed {
+  x: number;
+  y: number;
+}
+
 /**
  * Un RGB por celda, en orden de fila (fila 0 = sur).
  *
- * El mapeo valor → color sigue siendo el de `lib/presentation/risk.ts`: aquí
- * solo se cambia de formato para poder pintarlo en un lienzo.
+ * QUIEN llama decide el color. Este módulo solo lo coloca en la rejilla y lo
+ * pasa a componentes numéricos: no sabe qué métrica se está pintando, y por eso
+ * añadir una capa no le afecta. El mapeo valor → color vive en la capa, sobre el
+ * vocabulario de `lib/presentation/risk.ts`.
  */
-export function metricRgb(
-  cells: CellOverview[],
+export function cellsRgb<T extends Placed>(
+  cells: T[],
   gridWidth: number,
   gridHeight: number,
-  mode: ViewMode,
-  range: MetricRange,
+  colorOf: (cell: T) => string,
 ): Uint8ClampedArray {
   const rgb = new Uint8ClampedArray(gridWidth * gridHeight * 3);
   for (const cell of cells) {
     if (cell.x < 0 || cell.x >= gridWidth || cell.y < 0 || cell.y >= gridHeight) continue;
-    const [r, g, b] = parseColor(cellColor(cell, mode, range));
+    const [r, g, b] = parseColor(colorOf(cell));
     const offset = (cell.y * gridWidth + cell.x) * 3;
     rgb[offset] = r;
     rgb[offset + 1] = g;
     rgb[offset + 2] = b;
   }
   return rgb;
-}
-
-// --- Percentiles -------------------------------------------------------------
-
-/**
- * En qué percentil del lote cae un valor, de 0 a 1.
- *
- * Es lo que convierte una cifra suelta en una lectura. "Suelo 18,1 %" no dice si
- * eso es bueno; "18,1 %, percentil 4 del lote" sí. Ordenar valores que el motor
- * ya calculó no es una fórmula agronómica: no hay ningún umbral nuevo, solo un
- * recuento.
- */
-export function percentile(values: number[], value: number): number {
-  if (values.length === 0) return 0;
-  let below = 0;
-  for (const v of values) if (v < value) below += 1;
-  return below / values.length;
 }
 
 // --- Frontera de la zona en riesgo -------------------------------------------

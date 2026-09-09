@@ -1,0 +1,343 @@
+{
+  "headline": "Dataset sintetico de prueba de CERES.",
+  "summary": "DATASET\nLa Cuadricula\nMonquira, Villa de Leyva, Boyaca, Colombia\nSynthetic / MVP    Seed: 2026    Generador: cuadricula-v1\n\nFinca:\n- 4 ha productivas\n- 4 lotes de 1 ha\n- 100 x 100 m por lote\n- 1 m2 por celda (40,000 celdas en total)\n- lat 5.6375, lon -73.5264\n\nLotes:\n- P - Papa Diacol Capiro  (33.5 t/ha objetivo)\n- M - Maiz Amarillo  (7.5 t/ha objetivo)\n- Z - Zanahoria  (46.2 t/ha objetivo)\n- R - Remolacha  (27.8 t/ha objetivo)\n\nVariables sinteticas por celda:\n- Elevacion, pendiente, calidad del suelo,\n  densidad de siembra, sanidad, factor de rendimiento\n\nVariables latentes (no se guardan, CERES no las ve):\n- Humedad, pH, residuo del rendimiento real, labores agronomicas\n\nGround truth:\n- P: 33,500 kg de cosecha real, con variacion espacial por celda\n- M: 7,500 kg de cosecha real, con variacion espacial por celda\n- Z: 46,200 kg de cosecha real, con variacion espacial por celda\n- R: 27,800 kg de cosecha real, con variacion espacial por celda\n\nProcedencia:\n- Todas las observaciones = synthetic\n- Ninguna observacion representa una medicion real\n- Ningun propietario, tecnico, agricultor ni cliente real\n- created_by = NULL en todas las tablas\n\nLa Cuadricula no representa una finca real ni datos de un cliente.\nEs un escenario sintetico construido para validar CERES.",
+  "disclaimer": "La Cuadricula NO representa una finca real ni datos de un cliente. Es un escenario sintetico construido para validar CERES. Ni la finca, ni las celdas, ni las observaciones, ni las cosechas corresponden a ninguna medicion de campo. Todo el dataset es `synthetic`.",
+  "representation": "Representamos la finca a resolucion de 1 m2 por celda utilizando un campo sintetico espacialmente correlacionado. Son 40.000 unidades de representacion, no 40.000 mediciones.",
+  "generator": {
+    "version": "cuadricula-v1",
+    "module": "app.core.synthetic.cuadricula",
+    "seed": 2026,
+    "generated_at": "2026-09-09T00:30:11.638715+00:00",
+    "reproducible": "misma semilla -> mismos arrays, bit a bit"
+  },
+  "provenance": {
+    "dataset_kind": "synthetic",
+    "measured_rows": 0,
+    "created_by": "NULL en todas las tablas: no hay autenticacion y no se inventa un autor, tecnico, agricultor ni sensor"
+  },
+  "del_escenario": {
+    "descripcion": "Datos que vinieron dados y no se tocaron.",
+    "campos": [
+      "ubicacion de la finca (lat/lon, vereda, municipio, departamento)",
+      "area productiva y numero de lotes",
+      "cultivo, variedad, siembra y cosecha de cada lote",
+      "rendimiento objetivo de cada lote (t/ha)",
+      "humedad ideal y pH historico de cada cultivo",
+      "las ocho celdas de referencia",
+      "los doce eventos agronomicos y sus fechas"
+    ]
+  },
+  "supuestos_sinteticos": {
+    "descripcion": "Elegidos por nosotros. Ninguno es una medicion ni una constante agronomica publicada.",
+    "parametros": {
+      "rbf_wide_sigma_m": 40.0,
+      "rbf_local_sigma_m": 20.0,
+      "fit_bending_weight": 3000.0,
+      "elevation_noise_m": 0.1,
+      "flood_hollow_depth_m": 1.6,
+      "depression_blur_m": 25.0,
+      "depression_trend_m": 90.0,
+      "humidity_k_depression": 0.1,
+      "humidity_k_slope": 0.12,
+      "humidity_plot_bases": {
+        "P": 0.7365,
+        "M": 0.4498,
+        "Z": 0.6747,
+        "R": 0.6234
+      },
+      "yield_realization_ratio": 0.75,
+      "truth_damage": {
+        "disease": 0.62,
+        "water_stress": 0.45,
+        "physical_damage": 0.3
+      },
+      "severity_range": [
+        0.1,
+        0.95
+      ],
+      "box_capacity_kg": {
+        "P": 50.0,
+        "M": 40.0,
+        "Z": 20.0,
+        "R": 25.0
+      }
+    }
+  },
+  "variables_latentes": {
+    "descripcion": "Gobiernan el escenario y NO se guardan en ninguna columna. CERES no las ve.",
+    "humidity": "topografia -> depresion local -> humedad. Coloca los eventos y entra en el rendimiento real.",
+    "ph": "declarado por lote. Entra en `soil_quality` y no sale.",
+    "residuo_de_la_verdad": "ruido espacial propio del rendimiento real. Ningun modelo puede explicarlo.",
+    "labores": "las seis del escenario. `ObservationType` no tiene termino para ellas y no se disfrazan de dano."
+  },
+  "topografia": {
+    "metodo": "plano de minimos cuadrados sobre las 7 cotas declaradas + funciones de base radial que cierran los residuos + hondonada de inundacion + ruido de reticula suavizado",
+    "superficie": "UNA sola de 220x220 m para los cuatro lotes: los bordes casan porque es el mismo terreno",
+    "limite": "el escenario declara cotas y pendientes locales que no son del todo compatibles (2108->2112 en 40 m es 10 %, etiquetados 3 % y 8 %). Se priorizan las cotas y la pendiente se deriva."
+  },
+  "eventos": {
+    "adversos": [
+      {
+        "lote": "P",
+        "nombre": "Gota (Phytophthora)",
+        "fecha": "2026-05-12",
+        "tipo_ceres": "disease",
+        "zona": "wettest",
+        "cobertura": 0.18,
+        "nota": "Zona = 18 % mas humedo del lote: el fondo de la vaguada."
+      },
+      {
+        "lote": "M",
+        "nombre": "Gusano cogollero",
+        "fecha": "2026-06-05",
+        "tipo_ceres": "pest",
+        "zona": "border",
+        "cobertura": 0.18,
+        "nota": "Zona de borde: la plaga entra por los margenes del lote."
+      },
+      {
+        "lote": "M",
+        "nombre": "Estres hidrico",
+        "fecha": "2026-07-15",
+        "tipo_ceres": "water_stress",
+        "zona": "driest",
+        "cobertura": 0.15,
+        "nota": "Zona = 15 % mas seco: la loma del noreste."
+      },
+      {
+        "lote": "Z",
+        "nombre": "Granizada",
+        "fecha": "2026-07-10",
+        "tipo_ceres": "physical_damage",
+        "zona": "hail_band",
+        "cobertura": 0.2,
+        "nota": "Banda meteorologica en el sur del lote, no topografica."
+      },
+      {
+        "lote": "R",
+        "nombre": "Cercospora",
+        "fecha": "2026-06-20",
+        "tipo_ceres": "disease",
+        "zona": "wet_and_flat",
+        "cobertura": 0.15,
+        "nota": "Zona humeda Y llana: donde el agua no corre."
+      },
+      {
+        "lote": "R",
+        "nombre": "Inundacion parcial",
+        "fecha": "2026-07-02",
+        "tipo_ceres": "physical_damage",
+        "zona": "deepest",
+        "cobertura": 0.12,
+        "nota": "La hondonada cerrada. `physical_damage` y no `water_stress`: el encharcamiento tambien degrada el suelo, y es el unico tipo de CERES que toca las dos cosas."
+      }
+    ],
+    "labores_no_almacenadas": [
+      {
+        "lote": "P",
+        "nombre": "Fertilizacion NPK",
+        "fecha": "2026-04-05",
+        "nota": "Labor de manejo. Sin tabla donde guardarla."
+      },
+      {
+        "lote": "P",
+        "nombre": "Fungicida",
+        "fecha": "2026-05-14",
+        "nota": "Corta la gota en la VERDAD. CERES no lo sabe: no hay labores."
+      },
+      {
+        "lote": "M",
+        "nombre": "Riego",
+        "fecha": "2026-05-20",
+        "nota": "Labor puntual. Recogida en la base hidrica del lote."
+      },
+      {
+        "lote": "Z",
+        "nombre": "Cincelado",
+        "fecha": "2026-04-25",
+        "nota": "Preparacion. Sin tabla donde guardarla."
+      },
+      {
+        "lote": "Z",
+        "nombre": "Riego semanal",
+        "fecha": "2026-05-01",
+        "nota": "SIN FECHAS en el escenario. No se inventan: entra como base hidrica del lote."
+      },
+      {
+        "lote": "R",
+        "nombre": "Fertilizacion Boro/Zinc",
+        "fecha": "2026-05-15",
+        "nota": "Labor de manejo. Sin tabla donde guardarla."
+      }
+    ],
+    "metodo": "la zona es el cuantil superior de un campo continuo (humedad, depresion, distancia al borde o banda meteorologica). Nunca un rango de `cell_code`.",
+    "cobertura_de_zona": "completa: una observacion por celda dentro de la zona. Una exploracion real es dispersa; esto es una simulacion y el generador conoce cada celda."
+  },
+  "rendimiento": {
+    "metodo": "rendimiento relativo por celda (humedad vs ideal, suelo^0,5, densidad^0,7, danos por evento, residuo propio) y despues UN solo factor por lote para que la media caiga en el objetivo",
+    "objetivos_kg": {
+      "P": 33500.0,
+      "M": 7500.0,
+      "Z": 46200.0,
+      "R": 27800.0
+    },
+    "uniformidad": "prohibida: escalar no toca la dispersion relativa y hay un test que exige desviacion tipica > 0"
+  },
+  "sin_leakage": {
+    "verdad": "app.core.synthetic.cuadricula_dataset.truth_yield_field",
+    "prediccion": "app.core.prediction, sin modificar",
+    "garantia_estructural": "el motor consume el Protocol `CellState`, que tiene siete atributos y ninguno es rendimiento: `actual_yield_kg` no cabe en su entrada",
+    "diferencias": [
+      "la verdad ve la humedad latente; el modelo no tiene columna",
+      "la verdad sabe que hubo fungicida; CERES no guarda labores",
+      "danos de la verdad (0,62/0,45/0,30) != impact-v0 (0,45/0,30/0,25)",
+      "residuos distintos y de streams distintos"
+    ]
+  },
+  "anclajes": [
+    {
+      "cell_code": "P-00001",
+      "declarado": {
+        "elevation_m": 2105.0,
+        "humidity": 0.65,
+        "slope_pct": 2.0,
+        "density_per_m2": 4.0,
+        "yield_kg": 3.8,
+        "condition": "sano"
+      },
+      "generado": {
+        "elevation_m": 2104.79,
+        "humidity": 0.642,
+        "slope_pct": 2.02,
+        "density_per_m2": 4.0,
+        "yield_kg": 4.596
+      }
+    },
+    {
+      "cell_code": "P-08550",
+      "declarado": {
+        "elevation_m": 2102.0,
+        "humidity": 0.78,
+        "slope_pct": 1.0,
+        "density_per_m2": 3.0,
+        "yield_kg": 1.2,
+        "condition": "gota"
+      },
+      "generado": {
+        "elevation_m": 2102.2,
+        "humidity": 0.771,
+        "slope_pct": 1.57,
+        "density_per_m2": 3.7,
+        "yield_kg": 2.607
+      }
+    },
+    {
+      "cell_code": "M-00500",
+      "declarado": {
+        "elevation_m": 2108.0,
+        "humidity": 0.45,
+        "slope_pct": 3.0,
+        "density_per_m2": 6.0,
+        "yield_kg": 0.85,
+        "condition": "sano"
+      },
+      "generado": {
+        "elevation_m": 2107.54,
+        "humidity": 0.466,
+        "slope_pct": 8.73,
+        "density_per_m2": 5.4,
+        "yield_kg": 0.607
+      }
+    },
+    {
+      "cell_code": "M-04500",
+      "declarado": {
+        "elevation_m": 2112.0,
+        "humidity": 0.25,
+        "slope_pct": 8.0,
+        "density_per_m2": 5.0,
+        "yield_kg": 0.45,
+        "condition": "estres hidrico"
+      },
+      "generado": {
+        "elevation_m": 2111.6,
+        "humidity": 0.366,
+        "slope_pct": 8.11,
+        "density_per_m2": 5.2,
+        "yield_kg": 0.412
+      }
+    },
+    {
+      "cell_code": "Z-02000",
+      "declarado": {
+        "elevation_m": 2100.0,
+        "humidity": 0.7,
+        "slope_pct": 1.0,
+        "density_per_m2": 80.0,
+        "yield_kg": 5.2,
+        "condition": "sano"
+      },
+      "generado": {
+        "elevation_m": 2100.13,
+        "humidity": 0.716,
+        "slope_pct": 1.35,
+        "density_per_m2": 80.5,
+        "yield_kg": 5.157
+      }
+    },
+    {
+      "cell_code": "Z-08000",
+      "declarado": {
+        "elevation_m": 2101.0,
+        "humidity": 0.68,
+        "slope_pct": 1.0,
+        "density_per_m2": 60.0,
+        "yield_kg": 3.5,
+        "condition": "dano foliar"
+      },
+      "generado": {
+        "elevation_m": 2101.08,
+        "humidity": 0.695,
+        "slope_pct": 2.03,
+        "density_per_m2": 78.4,
+        "yield_kg": 3.868
+      }
+    },
+    {
+      "cell_code": "R-01000",
+      "declarado": {
+        "elevation_m": 2104.0,
+        "humidity": 0.6,
+        "slope_pct": 2.0,
+        "density_per_m2": 45.0,
+        "yield_kg": 3.1,
+        "condition": "sano"
+      },
+      "generado": {
+        "elevation_m": 2104.01,
+        "humidity": 0.611,
+        "slope_pct": 3.22,
+        "density_per_m2": 44.8,
+        "yield_kg": 2.699
+      }
+    },
+    {
+      "cell_code": "R-09500",
+      "declarado": {
+        "elevation_m": null,
+        "humidity": 0.9,
+        "slope_pct": null,
+        "density_per_m2": null,
+        "yield_kg": null,
+        "condition": "ahogada"
+      },
+      "generado": {
+        "elevation_m": 2105.67,
+        "humidity": 0.688,
+        "slope_pct": 3.61,
+        "density_per_m2": 42.3,
+        "yield_kg": 1.169
+      }
+    }
+  ]
+}

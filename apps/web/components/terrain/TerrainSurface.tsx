@@ -43,11 +43,11 @@ import {
   SRGBColorSpace,
 } from "three";
 
-import type { MetricRange, ViewMode } from "@/lib/presentation/risk";
-import { metricRgb, zoneContour } from "@/lib/terrain/analysis";
-import { CELL_SIZE, cellBounds, gridToWorld, worldToGrid } from "@/lib/terrain/coords";
+import { cellBounds, gridToWorld, worldToGrid, type PlotGrid } from "@/lib/terrain/coords";
 import type { ElevationField } from "@/lib/terrain/elevation";
+import type { AvailableLayer } from "@/lib/terrain/layers";
 import { buildSkirt, buildTerrainMesh, drapeOnTerrain } from "@/lib/terrain/geometry";
+import { isClick } from "@/lib/terrain/pointer";
 import {
   PAINT_SIZE,
   SHADE_SIZE,
@@ -57,17 +57,12 @@ import {
   paintAnalysis,
 } from "@/lib/terrain/paint";
 import type { TerrainCell } from "@/lib/terrain/types";
-import type { SurfaceStyle } from "@/stores/useCeresStore";
 
 /** Hueso: cursor y borde del lote. Acromático: nunca se lee como un nivel. */
 const SIGNAL = "#f2efe8";
 
 /** Segmentos por lado del cursor: bastantes para que abrace el relieve. */
 const CURSOR_SEGMENTS = 6;
-
-/** Cuanto puede moverse el puntero entre pulsar y soltar y seguir siendo un
- *  clic. Por encima de eso el gesto fue un giro de camara. */
-const DRAG_SLOP_PX = 5;
 
 /**
  * Separación entre curvas de nivel, en metros.
@@ -77,6 +72,52 @@ const DRAG_SLOP_PX = 5;
  * toma un cartógrafo al elegir la equidistancia de una hoja.
  */
 const CONTOUR_INTERVAL_M = 0.5;
+
+interface GrassTextures {
+  /** Ancho del lote en metros con el que se construyeron. */
+  width: number;
+  grass: CanvasTexture;
+  normal: CanvasTexture;
+}
+
+/**
+ * Caché de texturas de césped, a nivel de módulo y con una sola entrada.
+ *
+ * No es estado de componente porque no lo es conceptualmente: las texturas son
+ * función pura del ancho del lote, y sobreviven a que la capa activa vaya y
+ * venga. Guardarlas en `useState` obligaba a construirlas dentro de un efecto
+ * —que es justo lo que no hay que hacer con un recurso caro— y guardarlas en un
+ * `useMemo` las tiraba en cada cambio de capa.
+ *
+ * Una sola entrada: cambiar de lote libera la anterior en vez de acumular ocho
+ * megas de textura por lote visitado.
+ */
+let grassCache: GrassTextures | null = null;
+
+function grassTextures(meters: number): GrassTextures {
+  if (grassCache?.width === meters) return grassCache;
+  grassCache?.grass.dispose();
+  grassCache?.normal.dispose();
+  grassCache = buildGrassTextures(meters);
+  return grassCache;
+}
+
+function buildGrassTextures(meters: number): GrassTextures {
+  const grass = new CanvasTexture(createGrassCanvas(meters));
+  grass.colorSpace = SRGBColorSpace;
+  grass.minFilter = LinearFilter;
+  grass.magFilter = LinearFilter;
+  grass.anisotropy = 8;
+
+  const normal = new CanvasTexture(createNormalCanvas(meters));
+  normal.minFilter = LinearFilter;
+  normal.magFilter = LinearFilter;
+  normal.wrapS = RepeatWrapping;
+  normal.wrapT = RepeatWrapping;
+  normal.anisotropy = 8;
+
+  return { width: meters, grass, normal };
+}
 
 /** Marca una textura como sucia sin escribir sobre un valor que React memoiza. */
 function markDirty(texture: CanvasTexture): void {
@@ -93,11 +134,12 @@ interface TerrainSurfaceProps {
   field: ElevationField;
   /** RAMA ANALITICA. Solo decide el color y las anotaciones. */
   cells: TerrainCell[];
-  gridWidth: number;
-  gridHeight: number;
-  viewMode: ViewMode;
-  range: MetricRange;
-  surfaceStyle: SurfaceStyle;
+  plot: PlotGrid;
+  /**
+   * La capa activa. Entra por aquí y no puede salir de aquí: lo único que se le
+   * pide es `paint(cells, ...)`, que no ve el campo de elevación.
+   */
+  layer: AvailableLayer;
   onHover: (cell: TerrainCell | null, clientX: number, clientY: number) => void;
   onSelect: (cellId: string) => void;
   handle?: RefObject<TerrainSurfaceHandle | null>;
@@ -106,11 +148,8 @@ interface TerrainSurfaceProps {
 export function TerrainSurface({
   field,
   cells,
-  gridWidth,
-  gridHeight,
-  viewMode,
-  range,
-  surfaceStyle,
+  plot,
+  layer,
   onHover,
   onSelect,
   handle,
@@ -120,20 +159,23 @@ export function TerrainSurface({
   const cursorRef = useRef<CursorHandle>(null);
   const hovered = useRef<string | null>(null);
 
-  const worldWidth = gridWidth * CELL_SIZE;
+  // Ancho FISICO del lote: es lo que decide cuántos motivos de hierba caben, y
+  // la textura se genera por metro. Con celdas de 2 m, el mismo lote de 20 × 20
+  // celdas mide 40 m y necesita el cuádruple de motivos, no los mismos estirados.
+  const worldWidth = plot.width * plot.cellSizeM;
 
   // ═══ RAMA GEOMETRICA ═══════════════════════════════════════════════════════
   // Estas tres líneas solo ven `field`. Ni una celda entra aquí.
 
   const geometry = useMemo(
-    () => buildTerrainMesh(field, gridWidth, gridHeight),
-    [field, gridWidth, gridHeight],
+    () => buildTerrainMesh(field, plot),
+    [field, plot],
   );
   useEffect(() => () => geometry.dispose(), [geometry]);
 
   const skirt = useMemo(
-    () => buildSkirt(field, gridWidth, gridHeight),
-    [field, gridWidth, gridHeight],
+    () => buildSkirt(field, plot),
+    [field, plot],
   );
   useEffect(() => () => skirt.dispose(), [skirt]);
 
@@ -142,8 +184,8 @@ export function TerrainSurface({
     () =>
       field
         .contours(CONTOUR_INTERVAL_M)
-        .map((c) => drapeOnTerrain(c.points, field, gridWidth, gridHeight, 0.03)),
-    [field, gridWidth, gridHeight],
+        .map((c) => drapeOnTerrain(c.points, field, plot, 0.03)),
+    [field, plot],
   );
 
   /** Sombreado de relieve. Sale de la elevación y no cambia con la métrica. */
@@ -154,12 +196,12 @@ export function TerrainSurface({
 
   const border = useMemo(() => {
     const puntos: [number, number][] = [];
-    const pasos = Math.max(gridWidth, gridHeight) * 2;
+    const pasos = Math.max(plot.width, plot.height) * 2;
     const esquinas: [number, number][] = [
       [-0.5, -0.5],
-      [gridWidth - 0.5, -0.5],
-      [gridWidth - 0.5, gridHeight - 0.5],
-      [-0.5, gridHeight - 0.5],
+      [plot.width - 0.5, -0.5],
+      [plot.width - 0.5, plot.height - 0.5],
+      [-0.5, plot.height - 0.5],
     ];
     for (let lado = 0; lado < 4; lado += 1) {
       const a = esquinas[lado]!;
@@ -171,8 +213,8 @@ export function TerrainSurface({
         puntos.push([a[0] + (b[0] - a[0]) * t1, a[1] + (b[1] - a[1]) * t1]);
       }
     }
-    return drapeOnTerrain(puntos, field, gridWidth, gridHeight, 0.02);
-  }, [field, gridWidth, gridHeight]);
+    return drapeOnTerrain(puntos, field, plot, 0.02);
+  }, [field, plot]);
 
   // ═══ RAMA ANALITICA ════════════════════════════════════════════════════════
   // Estas solo ven `cells`. Ninguna toca la elevación.
@@ -191,61 +233,52 @@ export function TerrainSurface({
 
   useEffect(() => () => proTexture.dispose(), [proTexture]);
 
+  /**
+   * Todo lo que la capa tiene que decir, calculado UNA vez.
+   *
+   * `paint` no recibe `field`: es el punto donde se ve que activar una capa no
+   * puede llegar a la geometría.
+   */
+  const painted = useMemo(
+    // La capa recibe RECUENTOS, nunca el `plot`. Es la misma garantía de
+    // siempre vista desde el otro lado: si `paint` pudiera leer `cellSizeM`,
+    // una capa podría saber cuánto mide el terreno y empezar a opinar sobre él.
+    () => layer.paint(cells, plot.width, plot.height),
+    [layer, cells, plot],
+  );
+
   // Composición: el tono lo pone el dato, la luminosidad el terreno.
   useEffect(() => {
-    const rgb = metricRgb(cells, gridWidth, gridHeight, viewMode, range);
-    paintAnalysis(proCanvas, rgb, gridWidth, gridHeight, shadeCanvas);
+    paintAnalysis(proCanvas, painted.rgb, plot.width, plot.height, shadeCanvas);
     markDirty(proTexture);
     invalidate();
-  }, [cells, gridWidth, gridHeight, viewMode, range, proCanvas, proTexture, shadeCanvas, invalidate]);
+  }, [painted, plot, proCanvas, proTexture, shadeCanvas, invalidate]);
 
-  /** Contorno de la zona en riesgo alto, proyectado sobre el relieve. */
+  /** Fronteras que anota la capa, proyectadas sobre el relieve. */
   const zone = useMemo(() => {
-    if (surfaceStyle === "lindo") return [];
-    return drapeOnTerrain(
-      zoneContour(cells, gridWidth, gridHeight, "high"),
-      field,
-      gridWidth,
-      gridHeight,
-      0.05,
-    );
-  }, [surfaceStyle, cells, field, gridWidth, gridHeight]);
+    if (painted.zones.length === 0) return [];
+    return drapeOnTerrain(painted.zones, field, plot, 0.05);
+  }, [painted, field, plot]);
 
   // ═══ MATERIALES ════════════════════════════════════════════════════════════
-  // Perezosas: construir las texturas de césped cuesta ~300 ms de bucle sobre
-  // dos millones de píxeles, y quien no entra en esa vista no debe pagarlo.
-  const pretty = useMemo(() => {
-    if (surfaceStyle !== "lindo") return null;
 
-    const grass = new CanvasTexture(createGrassCanvas(worldWidth));
-    grass.colorSpace = SRGBColorSpace;
-    grass.minFilter = LinearFilter;
-    grass.magFilter = LinearFilter;
-    grass.anisotropy = 8;
-
-    const normal = new CanvasTexture(createNormalCanvas(worldWidth));
-    normal.minFilter = LinearFilter;
-    normal.magFilter = LinearFilter;
-    normal.wrapS = RepeatWrapping;
-    normal.wrapT = RepeatWrapping;
-    normal.anisotropy = 8;
-
-    return { grass, normal };
-  }, [surfaceStyle, worldWidth]);
-
-  useEffect(() => {
-    if (!pretty) return;
-    return () => {
-      pretty.grass.dispose();
-      pretty.normal.dispose();
-    };
-  }, [pretty]);
-
+  /**
+   * Las texturas de césped: perezosas la primera vez, y luego se quedan.
+   *
+   * Construirlas cuesta ~300 ms de bucle sobre dos millones de píxeles, así que
+   * quien nunca abre la capa Terreno no debe pagarlo. Pero tampoco puede
+   * pagarlo CADA vez que vuelve a ella: con capas, alternar Terreno ↔ Riesgo es
+   * un gesto normal, y reconstruirlas en cada ida y vuelta congelaba la interfaz
+   * un tercio de segundo. Se guardan mientras el lote no cambie.
+   *
+   * La caché vive a nivel de módulo, no en el componente: ver `grassTextures`.
+   */
   const material = useMemo(() => {
-    if (pretty) {
+    if (layer.surface === "terrain") {
+      const grass = grassTextures(worldWidth);
       return new MeshStandardMaterial({
-        map: pretty.grass,
-        normalMap: pretty.normal,
+        map: grass.grass,
+        normalMap: grass.normal,
         roughness: 0.95,
         metalness: 0,
       });
@@ -253,7 +286,7 @@ export function TerrainSurface({
     // Casi mate: un brillo especular sobre una celda roja la aclara y la hace
     // parecer de otro nivel. El relieve ya lo aporta el sombreado de la textura.
     return new MeshStandardMaterial({ map: proTexture, roughness: 0.97, metalness: 0 });
-  }, [pretty, proTexture]);
+  }, [layer.surface, worldWidth, proTexture]);
 
   const soilMaterial = useMemo(
     () =>
@@ -291,13 +324,13 @@ export function TerrainSurface({
    */
   const cellAt = useCallback(
     (worldX: number, worldZ: number) => {
-      const [gx, gy] = worldToGrid(worldX, worldZ, gridWidth, gridHeight);
+      const [gx, gy] = worldToGrid(worldX, worldZ, plot);
       const x = Math.round(gx);
       const y = Math.round(gy);
-      if (x < 0 || x >= gridWidth || y < 0 || y >= gridHeight) return null;
+      if (x < 0 || x >= plot.width || y < 0 || y >= plot.height) return null;
       return byPosition.get(`${x},${y}`) ?? null;
     },
-    [byPosition, gridWidth, gridHeight],
+    [byPosition, plot],
   );
 
   const moveCursor = useCallback(
@@ -353,11 +386,9 @@ export function TerrainSurface({
     (event: ThreeEvent<MouseEvent>) => {
       const start = pressAt.current;
       pressAt.current = null;
-      // Umbral, no igualdad: al pulsar sin querer mover, el raton se desplaza
-      // uno o dos pixeles y eso sigue siendo un clic.
-      if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > DRAG_SLOP_PX) {
-        return;
-      }
+      // El umbral vive en `pointer.ts`: es aritmetica de interaccion, y alli se
+      // puede probar sin levantar WebGL.
+      if (!isClick(start, { x: event.clientX, y: event.clientY })) return;
 
       const cell = cellAt(event.point.x, event.point.z);
       if (!cell) return;
@@ -391,7 +422,7 @@ export function TerrainSurface({
           color={SIGNAL}
           lineWidth={1}
           transparent
-          opacity={surfaceStyle === "lindo" ? 0.2 : 0.38}
+          opacity={layer.surface === "terrain" ? 0.2 : 0.38}
           toneMapped={false}
         />
       ))}
@@ -413,8 +444,7 @@ export function TerrainSurface({
       <Cursor
         handle={cursorRef}
         field={field}
-        gridWidth={gridWidth}
-        gridHeight={gridHeight}
+        plot={plot}
       />
     </group>
   );
@@ -440,13 +470,11 @@ interface CursorHandle {
 function Cursor({
   handle,
   field,
-  gridWidth,
-  gridHeight,
+  plot,
 }: {
   handle: RefObject<CursorHandle | null>;
   field: ElevationField;
-  gridWidth: number;
-  gridHeight: number;
+  plot: PlotGrid;
 }) {
   const meshRef = useRef<LineSegments>(null);
 
@@ -473,7 +501,7 @@ function Cursor({
 
       let p = 0;
       const put = (gx: number, gy: number) => {
-        const [wx, wz] = gridToWorld(gx, gy, gridWidth, gridHeight);
+        const [wx, wz] = gridToWorld(gx, gy, plot);
         positions[p++] = wx;
         positions[p++] = field.heightAt(gx, gy) + 0.07;
         positions[p++] = wz;

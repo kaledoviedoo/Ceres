@@ -65,6 +65,7 @@ es el unico resquicio que deja este diseno.
 
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
 from decimal import ROUND_HALF_UP, Decimal
 
 #: Decimales de los errores. Debe coincidir con el ROUND de la vista SQL.
@@ -118,3 +119,69 @@ def percentage_error(projected_yield_kg: float, actual_yield_kg: float) -> float
     actual = _to_decimal(actual_yield_kg)
     difference = abs(_to_decimal(projected_yield_kg) - actual)
     return _quantize(difference / actual * _HUNDRED)
+
+
+# =============================================================================
+# LA REGLA DE EMPAREJAMIENTO
+#
+# Decidir QUE prediccion se compara con una cosecha es una decision de dominio,
+# igual que dividir por el valor real: no es un detalle del servicio y tiene que
+# vivir donde vive el resto de la aritmetica del error, con su espejo en SQL.
+#
+# EL PROBLEMA
+#   `harvested_at` es un DATE. `Prediction.as_of` es un TIMESTAMPTZ. Un dia no
+#   es un instante, asi que hace falta una regla para convertir uno en otro.
+#
+# LA REGLA
+#   Una prediccion se empareja con una cosecha si habla de un momento
+#   ESTRICTAMENTE ANTERIOR al dia de la cosecha:
+#
+#       as_of < harvested_at a las 00:00 UTC
+#
+# POR QUE EL INICIO DEL DIA Y NO EL FINAL
+#   La cosecha ocurrio en algun momento de ese dia y no sabemos cual. Una
+#   prediccion fechada ese mismo dia a las 14:00 pudo hacerse con el fruto ya
+#   recogido, y entonces no es una prediccion: es una descripcion. No hay forma
+#   de distinguirlo con los datos que hay.
+#
+#   Entre perder un emparejamiento legitimo y afirmar un error de prediccion que
+#   no lo es, se elige perder el emparejamiento. Sobrestimar la cobertura de
+#   validacion es el fallo caro: convierte en evidencia algo que no lo es.
+#
+#   El dia que `harvests` tenga hora, esta funcion se afina y el resto no cambia.
+#
+# POR QUE `as_of` Y NO `created_at`
+#   `created_at` es cuando se ejecuto el calculo. Una prediccion lanzada hoy
+#   sobre el estado de marzo tiene `created_at` de hoy: emparejarla por ahi
+#   dejaria fuera predicciones perfectamente validas y dentro ninguna que lo
+#   fuera. Lo que ordena una serie es el momento del que habla.
+#
+# PREDICCIONES SIN `as_of`
+#   `NULL` significa "el estado base, sin fechar". Un estado sin fecha no se
+#   puede situar antes ni despues de una cosecha, asi que no empareja. Hoy no
+#   hay ninguna fila asi; la regla existe para que su aparicion no invente un
+#   error.
+# =============================================================================
+
+
+def harvest_cutoff(harvested_at: date) -> datetime:
+    """El instante hasta el que una prediccion puede considerarse anterior.
+
+    El comienzo del dia de la cosecha, en UTC.
+    """
+    return datetime(
+        harvested_at.year, harvested_at.month, harvested_at.day, tzinfo=timezone.utc
+    )
+
+
+def prediction_precedes_harvest(as_of: datetime | None, harvested_at: date) -> bool:
+    """¿Habla esta prediccion de un momento anterior a la cosecha?
+
+    Es la unica pregunta que decide si un par prediccion/cosecha produce un
+    error medible.
+    """
+    if as_of is None:
+        return False
+
+    momento = as_of if as_of.tzinfo else as_of.replace(tzinfo=timezone.utc)
+    return momento < harvest_cutoff(harvested_at)

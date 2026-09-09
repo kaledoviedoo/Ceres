@@ -141,6 +141,13 @@ CLEANUP_STATEMENTS = (
     "DELETE FROM observations WHERE created_by IS NULL",
 )
 
+#: Variable de entorno con la que se autoriza la limpieza destructiva.
+TRUNCATE_OPT_IN = "CERES_PG_TESTS_MAY_TRUNCATE"
+
+#: Cuantas filas de mas hacen sospechar que la base guarda un dataset que estos
+#: tests destruirian. Las que crea el propio paquete son unas pocas por test.
+_UMBRAL_DATASET = 100
+
 
 def _clean(session) -> None:
     session.rollback()
@@ -149,13 +156,53 @@ def _clean(session) -> None:
     session.commit()
 
 
+def _filas_en_riesgo(session) -> tuple[int, int, int]:
+    """Predicciones, cosechas y observaciones sin autor que la limpieza borraria."""
+    session.rollback()
+    return session.execute(
+        text("""
+        SELECT (SELECT count(*) FROM predictions),
+               (SELECT count(*) FROM harvests),
+               (SELECT count(*) FROM observations WHERE created_by IS NULL)
+        """)
+    ).one()
+
+
 @pytest.fixture(autouse=True)
 def cleanup_transactional_rows(pg_session):
     """Deja la base como estaba: seed intacto, filas de test borradas.
 
     `autouse`: se aplica a todos los tests del paquete, antes y despues, para
     que ninguno dependa del orden ni herede basura de otro.
+
+    POR QUE HAY UNA PUERTA DELANTE
+    ------------------------------
+    La limpieza es un `TRUNCATE` de tabla entera, y tiene que serlo: la
+    migracion 0002 pone un trigger que prohibe `DELETE` sobre `predictions`, asi
+    que no hay forma de borrar solo las filas del test. Mientras la base de
+    desarrollo tuvo 0 predicciones y 0 cosechas eso no destruia nada.
+
+    Dejo de ser inofensivo con la finca sintetica La Cuadricula: 120.000
+    predicciones, 40.000 cosechas y 9.900 observaciones sin autor --que es
+    justo lo que la segunda sentencia borra-- desaparecian al correr los tests,
+    en silencio, y recargarlas cuesta tres minutos.
+
+    Asi que la destruccion pasa a ser explicita. Si la base guarda un dataset,
+    estos tests se saltan y dicen por que; para ejecutarlos hay que autorizarlo
+    con la variable de entorno, sabiendo que despues habra que recargar.
     """
+    predicciones, cosechas, observaciones = _filas_en_riesgo(pg_session)
+    total = predicciones + cosechas + observaciones
+
+    if total > _UMBRAL_DATASET and not os.environ.get(TRUNCATE_OPT_IN):
+        pytest.skip(
+            f"La base guarda un dataset que estos tests destruirian "
+            f"({predicciones} predicciones, {cosechas} cosechas, "
+            f"{observaciones} observaciones sin autor). Para ejecutarlos de "
+            f"todas formas: {TRUNCATE_OPT_IN}=1, y despues recarga con "
+            f"`py scripts/generate_cuadricula.py --apply`."
+        )
+
     _clean(pg_session)
     yield
     _clean(pg_session)
@@ -173,8 +220,24 @@ def seeded_cell(pg_session):
 
 
 @pytest.fixture
-def seeded_cycle(pg_session):
-    cycle_id = pg_session.execute(text("SELECT id FROM crop_cycles LIMIT 1")).scalar()
+def seeded_cycle(pg_session, seeded_cell):
+    """El ciclo DEL LOTE de `seeded_cell`, no el primero que aparezca.
+
+    Cogia `LIMIT 1` sin filtrar, lo cual funciono mientras hubo un solo ciclo en
+    la base. Con la finca sintetica La Cuadricula hay cinco, y el que salia era
+    de otro lote: la API respondia 409 --correctamente, porque una prediccion
+    exige que celda y ciclo compartan lote-- y los tests se caian por un fallo
+    del fixture, no del sistema.
+    """
+    cycle_id = pg_session.execute(
+        text("""
+        SELECT c.id FROM crop_cycles c
+        JOIN grid_cells g ON g.plot_id = c.plot_id
+        WHERE g.id = :cell
+        LIMIT 1
+        """),
+        {"cell": seeded_cell},
+    ).scalar()
     if cycle_id is None:
         pytest.skip("El seed no esta cargado: ejecuta generate_demo_data.py --apply")
     return cycle_id

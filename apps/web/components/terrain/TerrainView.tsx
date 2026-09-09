@@ -17,24 +17,33 @@
 
 import { CellGrid } from "@/components/terrain/CellGrid";
 import { TerrainCanvas } from "@/components/terrain/TerrainCanvas";
+import type { PlotGrid } from "@/lib/terrain/coords";
 import type { ElevationField } from "@/lib/terrain/elevation";
 import type { TerrainCell } from "@/lib/terrain/types";
+import { getAvailableLayer } from "@/lib/terrain/layers";
 import { useCeresStore } from "@/stores/useCeresStore";
 
 interface TerrainViewProps {
   /** Rama geométrica. `null` mientras no hay datos. */
   field: ElevationField | null;
   cells: TerrainCell[];
-  gridWidth: number;
-  gridHeight: number;
+  /**
+   * La malla física del lote. Un solo objeto y no tres props sueltas: el lado de
+   * la celda viaja pegado a las dimensiones, así que no hay forma de pasar unas
+   * y olvidar el otro.
+   */
+  plot: PlotGrid;
 }
 
-export function TerrainView({ field, cells, gridWidth, gridHeight }: TerrainViewProps) {
-  const viewMode = useCeresStore((state) => state.viewMode);
+export function TerrainView({ field, cells, plot }: TerrainViewProps) {
   const terrainMode = useCeresStore((state) => state.terrainMode);
-  const surfaceStyle = useCeresStore((state) => state.surfaceStyle);
+  const activeLayerId = useCeresStore((state) => state.activeLayerId);
   const selectedCellId = useCeresStore((state) => state.selectedCellId);
   const selectCell = useCeresStore((state) => state.selectCell);
+
+  // La MISMA capa alimenta las dos proyecciones. Es lo que hace que planta y
+  // relieve no puedan discrepar sobre qué se está mirando.
+  const layer = getAvailableLayer(activeLayerId);
 
   if (terrainMode === "2d") {
     // La malla se centra en el hueco que queda LIBRE, no en el lienzo entero.
@@ -62,9 +71,9 @@ export function TerrainView({ field, cells, gridWidth, gridHeight }: TerrainView
         <div className="w-full max-w-[min(680px,calc(55dvh-14.5rem))] shrink-0 md:max-w-[min(680px,calc(55dvh-12rem))] lg:max-w-[min(680px,calc(100dvh-17.5rem))]">
         <CellGrid
           cells={cells}
-          gridWidth={gridWidth}
-          gridHeight={gridHeight}
-          viewMode={viewMode}
+          gridWidth={plot.width}
+          gridHeight={plot.height}
+          layer={layer}
           selectedCellId={selectedCellId}
           onSelect={selectCell}
         />
@@ -80,10 +89,8 @@ export function TerrainView({ field, cells, gridWidth, gridHeight }: TerrainView
     <TerrainCanvas
       field={field}
       cells={cells}
-      gridWidth={gridWidth}
-      gridHeight={gridHeight}
-      viewMode={viewMode}
-      surfaceStyle={surfaceStyle}
+      plot={plot}
+      layer={layer}
       selectedCellId={selectedCellId}
       onSelect={selectCell}
     />

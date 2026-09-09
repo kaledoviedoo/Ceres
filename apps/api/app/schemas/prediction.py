@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import Field, computed_field
 
@@ -38,11 +39,19 @@ class PredictionCreate(CeresSchema):
     """Cuerpo de `POST /api/v1/predictions`.
 
     Se pide una prediccion para una celda dentro de un ciclo de cultivo. El
-    frontend solo manda identificadores: nunca calcula agricultura.
+    frontend solo manda identificadores y, si quiere, una FECHA: nunca calcula
+    agricultura.
     """
 
     cell_id: uuid.UUID
     crop_cycle_id: uuid.UUID
+    #: De que momento se quiere la prediccion. Omitirlo significa "ahora".
+    #:
+    #: Es una fecha, no un estado: el cliente sigue sin poder mandar
+    #: `soil_quality` ni `health_factor` —`extra="forbid"` lo rechaza con 422—.
+    #: Lo unico que elige es el instante; el estado lo deriva el servidor de las
+    #: observaciones que ya tenia.
+    as_of: datetime | None = None
 
 
 class PredictionRead(CeresORMSchema):
@@ -59,6 +68,32 @@ class PredictionRead(CeresORMSchema):
     risk_level: RiskLevel
 
     factors: PredictionFactors
+    #: COPIA DE LAS ENTRADAS con las que se ejecuto el motor.
+    #:
+    #: Estaba guardada desde el principio y no salia por la API, y sin ella una
+    #: serie historica no se puede leer: dos predicciones distintas de la misma
+    #: celda pueden diferir porque cambio el modelo o porque cambio el terreno,
+    #: y `factors` sola no distingue los dos casos. Con `inputs` cada punto de la
+    #: serie es reproducible.
+    #:
+    #: Es un diccionario abierto a proposito: describe la ENTRADA de una version
+    #: concreta del motor, y esa forma cambia cuando cambia el modelo. Cerrarlo
+    #: en un schema obligaria a migrar el historico cada vez.
+    inputs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Entradas exactas usadas por el motor en esta ejecucion",
+    )
+    # NO hay `created_by`, y no se anade vacio a proposito.
+    #
+    # La tabla `predictions` no tiene columna de autor —`observations` y
+    # `harvests` si la tienen—. Publicar aqui un `created_by: null` constante
+    # seria anunciar una columna que no existe: un cliente que la viera
+    # esperaria que algun dia trajera un usuario, y hoy nada podria rellenarla
+    # porque tampoco hay autenticacion. Anadirla de verdad es una migracion.
+    #: DE QUE MOMENTO habla. `created_at` dice cuando se ejecuto; esto, de que
+    #: estado agronomico. Sin los dos, una serie ordenada por `created_at`
+    #: mezclaria el orden de ejecucion con el orden de los hechos.
+    as_of: datetime | None = None
     created_at: datetime
 
     @computed_field

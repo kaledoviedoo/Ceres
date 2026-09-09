@@ -1,7 +1,11 @@
 """Contrato de API: celda de la malla.
 
-`CellSummary` es deliberadamente compacto: `GET /plots/{id}/cells` devuelve 400
-celdas de una vez y ese payload alimenta el render del grid (2D y luego 3D).
+`CellSummary` es deliberadamente compacto: `GET /plots/{id}/cells` devuelve la
+malla entera de una vez y ese payload alimenta el render del terreno (2D y 3D).
+
+Cuanto pesa depende del lote, y por eso el campo importa: los de La Cuadricula
+son de 100 x 100, o sea 10.000 celdas. Medido, ~219 bytes por celda: unos 2 MB
+por peticion. Cada campo que se anada aqui se multiplica por diez mil.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.schemas.common import CeresORMSchema
+from app.schemas.provenance import CellProvenance
 
 
 class CellFeatures(CeresORMSchema):
@@ -53,11 +58,15 @@ class CellCollection(CeresORMSchema):
     """Respuesta de `GET /plots/{plot_id}/cells`.
 
     Incluye las dimensiones de la malla para que el frontend no tenga que
-    deducirlas recorriendo las celdas.
+    deducirlas recorriendo las celdas, y la procedencia de los campos para que
+    no tenga que suponerla.
     """
 
     plot_id: uuid.UUID
     grid_width: int = Field(gt=0)
     grid_height: int = Field(gt=0)
     cell_size_m: float = Field(gt=0)
+    #: De donde sale cada grupo de campos. Obligatorio: un cliente que reciba
+    #: celdas sin procedencia tendria que inventarsela, y hasta ahora lo hacia.
+    provenance: CellProvenance
     cells: list[CellSummary]

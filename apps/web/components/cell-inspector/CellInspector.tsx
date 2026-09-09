@@ -47,20 +47,30 @@ import {
   formatKg,
   formatPercent,
   formatScore,
+  persistenceLabel,
 } from "@/lib/presentation/format";
 import { RISK_COLORS, riskDistribution } from "@/lib/presentation/risk";
-import { percentile } from "@/lib/terrain/analysis";
-import type { ElevationField } from "@/lib/terrain/elevation";
+import { percentileLabel, percentileOf } from "@/lib/terrain/statistics";
+import { PROVENANCE_LABEL, type ElevationField } from "@/lib/terrain/elevation";
 import type { CellDetail, CellOverview, Plot, RiskLevel } from "@/lib/types/api";
 
 interface CellInspectorProps {
   cell: CellDetail | null;
   overview: CellOverview | null;
   cells: CellOverview[];
+  /**
+   * Si las métricas de `overview` están guardadas.
+   *
+   * Lo declara la API y hoy es siempre `false`: son cálculos al vuelo. Se pasa
+   * en vez de escribirlo a mano para que el día que cambie, cambie el rótulo.
+   */
+  overviewPersisted: boolean;
   /** Solo para leer la procedencia. El inspector no construye geometría. */
   field: ElevationField | null;
   plot: Plot | null;
   cropCycleId: string | null;
+  /** El instante que se está pintando; viaja al guardar una predicción. */
+  asOf: string | null;
   isLoading: boolean;
   error: string | null;
   onRetry?: () => void;
@@ -80,9 +90,11 @@ export function CellInspector({
   cell,
   overview,
   cells,
+  overviewPersisted,
   field,
   plot,
   cropCycleId,
+  asOf,
   isLoading,
   error,
   onRetry,
@@ -100,7 +112,7 @@ export function CellInspector({
    *  la barra y para la frase que la explica: si divergieran, el texto
    *  contaría algo distinto de lo que se ve. */
   const rendimientoPct = overview
-    ? percentile(yields, overview.projected_yield_kg)
+    ? percentileOf(yields, overview.projected_yield_kg)
     : 0;
 
   const row = useMemo(() => {
@@ -158,7 +170,15 @@ export function CellInspector({
           <Stat label="Latitud" value={formatLatitude(cell.centroid_latitude)} />
           <Stat label="Longitud" value={formatLongitude(cell.centroid_longitude)} />
           <Stat label="Elevación" value={`${cell.elevation_m.toFixed(2)} m`} hint="sobre el nivel del mar" />
-          <Stat label="Pendiente" value={formatDegrees(cell.slope_deg)} />
+          {/* El `hint` no es adorno: la pendiente está junto a unas coordenadas
+              con seis decimales y una altitud con dos, y en esa compañía se lee
+              como una medición. Se deriva de la elevación de al lado, que la
+              nota de abajo declara sintética. */}
+          <Stat
+            label="Pendiente"
+            value={formatDegrees(cell.slope_deg)}
+            hint="derivada de la elevación"
+          />
         </div>
 
         {field && <ProvenanceNote field={field} />}
@@ -166,7 +186,7 @@ export function CellInspector({
 
       {/* ── 3 · Cuánto da ───────────────────────────────────────────────── */}
       {overview && (
-        <Block title="Rendimiento estimado" note="Sin guardar">
+        <Block title="Rendimiento estimado" note={persistenceLabel(overviewPersisted)}>
           <p className="display">{formatKg(overview.projected_yield_kg)}</p>
           <p className="tabular mt-1.5 text-[11px] text-muted">
             {formatInteger(overview.projected_boxes)} cajas proyectadas
@@ -187,11 +207,13 @@ export function CellInspector({
       )}
 
       {/* ── 4 · Cómo está el terreno ────────────────────────────────────── */}
-      <Block title="Condición del terreno" note="Medido">
-        {/* Aquí las barras van SIN percentil a propósito: son condiciones de
-            entrada, no resultados, y ordenarlas entre celdas invitaría a leer
-            "mejor suelo que el 70 % del lote" como si fuera una conclusión del
-            motor. El percentil vive donde sí es una conclusión: el rendimiento. */}
+      {/* "Entrada del modelo" y no "Medido", que es lo que decía antes y era
+          falso: ninguno de estos cuatro valores se levantó en campo. Llegan en
+          la ficha de la celda y alimentan el motor —sanidad y suelo son dos de
+          los tres términos del score de riesgo—. Lo que sí es cierto de todos
+          ellos, venga el dataset de donde venga, es que son ENTRADAS: nada aquí
+          es un resultado, y por eso ninguna barra lleva percentil. */}
+      <Block title="Condición del terreno" note="Entrada del modelo">
         <MetricBar
           label="Calidad de suelo"
           value={formatIndex(cell.soil_quality)}
@@ -244,7 +266,7 @@ export function CellInspector({
               tone={tone}
             />
             <p className="mt-1 text-[11px] leading-relaxed text-muted">
-              Rinde más que el {Math.round(rendimientoPct * 100)} % de las{" "}
+              Rinde más que el {percentileLabel(rendimientoPct)} % de las{" "}
               {yields.length} celdas del lote.
             </p>
           </div>
@@ -263,7 +285,7 @@ export function CellInspector({
         />
 
         <div className="mt-4">
-          <PredictionPanel cellId={cell.id} cropCycleId={cropCycleId} />
+          <PredictionPanel cellId={cell.id} cropCycleId={cropCycleId} asOf={asOf} />
         </div>
       </Block>
     </div>
@@ -280,7 +302,6 @@ export function CellInspector({
  */
 function ProvenanceNote({ field }: { field: ElevationField }) {
   const p = field.provenance;
-  const etiqueta = { synthetic: "Sintética", dem: "DEM", lidar: "LiDAR" }[p.kind];
 
   return (
     <p className="mt-3 flex items-start gap-2 border-t border-line-soft pt-3 text-[10px] leading-relaxed text-muted">
@@ -291,13 +312,18 @@ function ProvenanceNote({ field }: { field: ElevationField }) {
         }`}
       />
       <span>
-        <span className="text-ink-soft">Elevación {etiqueta.toLowerCase()}</span>
+        <span className="text-ink-soft">Elevación {PROVENANCE_LABEL[p.kind]}</span>
         {" · "}
-        {p.measured ? "medición" : "dato generado, no medido"}
+        {p.measured ? "medición" : "dato no medido"}
         {" · resolución "}
         {p.nominalResolutionM} m nominal
-        {p.effectiveResolutionM !== p.nominalResolutionM &&
-          ` (${p.effectiveResolutionM} m efectiva)`}
+        {/* La efectiva solo aparece si alguien la ha medido. Cuando la API no la
+            declara llega `null`, y escribir ahí un número —o repetir la nominal—
+            afirmaría una precisión que nadie ha comprobado. */}
+        {p.effectiveResolutionM === null
+          ? " · resolución efectiva sin medir"
+          : p.effectiveResolutionM !== p.nominalResolutionM &&
+            ` (${p.effectiveResolutionM} m efectiva)`}
       </span>
     </p>
   );
@@ -324,6 +350,11 @@ function Block({
 }
 
 const LEVELS: RiskLevel[] = ["low", "medium", "high"];
+
+/** Cuántos metros ocupan `celdas` en este lote. Sale del dato, no de suponer 1 m. */
+function ladoEnMetros(celdas: number, plot: Plot): string {
+  return (celdas * plot.cell_size_m).toLocaleString("es", { maximumFractionDigits: 1 });
+}
 
 /**
  * Lo que se ve cuando no hay ninguna celda abierta.
@@ -366,8 +397,13 @@ function PlotSummary({
             <Stat label="Mínima" value={`${field.source.minMeters.toFixed(2)} m`} />
             <Stat label="Máxima" value={`${field.source.maxMeters.toFixed(2)} m`} />
           </div>
+          {/* Los metros del lote salen de multiplicar celdas por `cell_size_m`,
+              no de suponer que una celda mide un metro. Antes esta frase decía
+              "en 20 × 20 m" leyendo el RECUENTO de celdas: con celdas de medio
+              metro habría afirmado el doble del lote real. */}
           <p className="tabular mt-2 text-[11px] text-muted">
-            Desnivel {field.reliefM.toFixed(2)} m en {plot.grid_width} × {plot.grid_height} m
+            Desnivel {field.reliefM.toFixed(2)} m en {ladoEnMetros(plot.grid_width, plot)} ×{" "}
+            {ladoEnMetros(plot.grid_height, plot)} m
           </p>
           <ProvenanceNote field={field} />
         </Block>

@@ -8,12 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  RISK_COLORS,
-  cellColor,
-  metricRange,
-  riskDistribution,
-} from "@/lib/presentation/risk";
+import { RISK_COLORS, rampColor, riskDistribution } from "@/lib/presentation/risk";
 import {
   formatFactorDelta,
   formatIndex,
@@ -21,8 +16,7 @@ import {
   formatPercent,
   formatScore,
 } from "@/lib/presentation/format";
-import type { CellOverview } from "@/lib/types/api";
-import { buildOverview, cellOverview } from "./fixtures";
+import { buildOverview } from "./fixtures";
 
 describe("colores de riesgo", () => {
   it("usa verde, ámbar y rojo para los tres niveles", () => {
@@ -31,74 +25,40 @@ describe("colores de riesgo", () => {
     expect(RISK_COLORS.high.fill).toBe("#ef4444");
   });
 
-  it("en modo riesgo colorea por nivel, no por rampa continua", () => {
-    // El nivel es una decisión del dominio (umbrales en app/domain/units.py).
-    // Difuminarlo escondería justo lo que el agrónomo busca.
-    const range = { min: 0, max: 1 };
-    const high: CellOverview = { ...cellOverview, risk_level: "high", risk_score: 0.67 };
-    const alsoHigh: CellOverview = { ...cellOverview, risk_level: "high", risk_score: 0.99 };
-
-    expect(cellColor(high, "risk", range)).toBe(RISK_COLORS.high.fill);
-    expect(cellColor(alsoHigh, "risk", range)).toBe(RISK_COLORS.high.fill);
+  it("la rampa se orienta por DIRECCION, no por nombre de métrica", () => {
+    // Verde es siempre "bien" y rojo "mal". Lo que cambia es qué extremo del dato
+    // es cuál, y eso lo declara la capa. Este módulo ya no conoce ninguna métrica
+    // por su nombre: por eso añadir Suelo y Sanidad no lo tocó.
+    expect(rampColor(1, "up")).toBe("rgb(34, 197, 94)");
+    expect(rampColor(0, "up")).toBe("rgb(239, 68, 68)");
+    expect(rampColor(0, "down")).toBe("rgb(34, 197, 94)");
+    expect(rampColor(1, "down")).toBe("rgb(239, 68, 68)");
   });
 
-  it("en modo rendimiento, más kilos es más verde", () => {
-    // Misma paleta que el riesgo pero invertida: en rendimiento más es mejor.
-    const cells = buildOverview().cells;
-    const range = metricRange(cells, "yield");
-    const best = cells.find((c) => c.projected_yield_kg === range.max)!;
-    const worst = cells.find((c) => c.projected_yield_kg === range.min)!;
-
-    // Mismos tonos que el riesgo; la rampa los devuelve en `rgb()` porque
-    // interpola, mientras que los niveles discretos salen en hex.
-    expect(cellColor(best, "yield", range)).toBe("rgb(34, 197, 94)");
-    expect(cellColor(worst, "yield", range)).toBe("rgb(239, 68, 68)");
+  it("las dos direcciones son la misma escala del revés", () => {
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      expect(rampColor(t, "up")).toBe(rampColor(1 - t, "down"));
+    }
   });
 
-  it("rendimiento y pérdida son la misma escala en sentidos opuestos", () => {
-    // Comparten paleta a propósito: verde es siempre "bien" y rojo "mal". Lo que
-    // cambia es qué extremo del dato es cuál, y de eso avisa la leyenda.
-    const cells = buildOverview().cells;
-    const yieldRange = metricRange(cells, "yield");
-    const lossRange = metricRange(cells, "loss");
-
-    const mejorRendimiento = cells.find((c) => c.projected_yield_kg === yieldRange.max)!;
-    const menorPerdida = cells.find((c) => c.estimated_loss_percentage === lossRange.min)!;
-
-    expect(cellColor(mejorRendimiento, "yield", yieldRange)).toBe("rgb(34, 197, 94)");
-    expect(cellColor(menorPerdida, "loss", lossRange)).toBe("rgb(34, 197, 94)");
+  it("acota fuera de rango en vez de salirse de la paleta", () => {
+    expect(rampColor(-2, "up")).toBe(rampColor(0, "up"));
+    expect(rampColor(9, "up")).toBe(rampColor(1, "up"));
   });
 
-  it("la rampa de rendimiento no repite color entre rendimientos distintos", () => {
+  it("la rampa no repite color entre valores distintos", () => {
     // Es lo que hace legible un mapa de calor: si la rampa volviera sobre sus
-    // pasos, dos rendimientos distintos compartirían color y el mapa mentiría.
-    //
-    // Las celdas se construyen aquí en vez de salir del fixture: el fixture
-    // tiene pocos valores distintos, así que probar con él mediría el fixture y
-    // no la rampa.
-    const range = { min: 0, max: 10 };
-    const escalon = (kg: number) =>
-      cellColor({ ...buildOverview().cells[0]!, projected_yield_kg: kg }, "yield", range);
-
-    const colores = new Set<string>();
-    for (let i = 0; i <= 24; i += 1) colores.add(escalon((i / 24) * 10));
-
-    expect(colores.size).toBe(25);
+    // pasos, dos valores distintos compartirían color y el mapa mentiría.
+    const vistos = new Set<string>();
+    for (let i = 0; i <= 20; i += 1) vistos.add(rampColor(i / 20, "up"));
+    expect(vistos.size).toBe(21);
   });
 
-  it("en modo pérdida, más porcentaje es más rojo", () => {
-    const cells = buildOverview().cells;
-    const range = metricRange(cells, "loss");
-    const worst = cells.find((c) => c.estimated_loss_percentage === range.max)!;
-
-    expect(cellColor(worst, "loss", range)).toBe("rgb(239, 68, 68)");
-  });
-
-  it("no divide por cero cuando todas las celdas valen igual", () => {
-    const flat = [cellOverview, { ...cellOverview, cell_id: "otra" }];
-    const range = metricRange(flat, "yield");
-
-    expect(() => cellColor(flat[0]!, "yield", range)).not.toThrow();
+  it("un lote sin variación no se estira: tono central, sin dividir por cero", () => {
+    // Con mínimo igual a máximo la normalización sería 0/0. Quien llama entrega
+    // t = 0,5 y la rampa devuelve el ámbar central en vez de NaN.
+    expect(rampColor(0.5, "up")).toBe(rampColor(0.5, "down"));
+    expect(() => rampColor(Number.NaN, "up")).not.toThrow();
   });
 });
 

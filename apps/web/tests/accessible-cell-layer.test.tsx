@@ -11,6 +11,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { AccessibleCellLayer } from "@/components/terrain/AccessibleCellLayer";
+import { getAvailableLayer } from "@/lib/terrain/layers";
 import { buildTerrainCells } from "./fixtures";
 
 function renderLayer(overrides: Partial<Parameters<typeof AccessibleCellLayer>[0]> = {}) {
@@ -23,6 +24,7 @@ function renderLayer(overrides: Partial<Parameters<typeof AccessibleCellLayer>[0
       cells={cells}
       gridWidth={20}
       gridHeight={20}
+      layer={getAvailableLayer("risk")}
       selectedCellId={null}
       onSelect={onSelect}
       onFocusCell={onFocusCell}
@@ -137,5 +139,34 @@ describe("AccessibleCellLayer", () => {
     // ellos se llega por teclado.
     const grid = screen.getByRole("grid");
     expect(grid.className).toContain("pointer-events-none");
+  });
+});
+
+describe("el color no puede ser el único portador del dato", () => {
+  it("el nombre de la celda lleva el valor de la capa activa", () => {
+    /*
+     * Con Suelo o Sanidad activas, lo que la capa proyecta sobre el terreno es
+     * un tono y nada más. En planta ese valor ya estaba en el nombre de cada
+     * cuadro; aquí, en relieve, la malla accesible enumeraba rendimiento,
+     * pérdida y riesgo y callaba justo lo que se estaba mirando.
+     */
+    const { cells } = renderLayer({ layer: getAvailableLayer("soil") });
+    const primera = cells.find((c) => c.x === 0 && c.y === 19)!;
+    const boton = screen.getByRole("gridcell", { name: new RegExp(primera.cell_code) });
+
+    expect(boton.getAttribute("aria-label")).toContain("Suelo");
+    expect(boton.getAttribute("aria-label")).toContain(
+      getAvailableLayer("soil").format(primera.soil_quality),
+    );
+  });
+
+  it("no repite lo que el nombre ya dice", () => {
+    // El rendimiento se enuncia en toda celda: repetirlo alargaría cada lectura
+    // sin añadir nada.
+    const { cells } = renderLayer({ layer: getAvailableLayer("yield") });
+    const primera = cells.find((c) => c.x === 0 && c.y === 19)!;
+    const boton = screen.getByRole("gridcell", { name: new RegExp(primera.cell_code) });
+
+    expect(boton.getAttribute("aria-label")).not.toContain("Rendimiento");
   });
 });

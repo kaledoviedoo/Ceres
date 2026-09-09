@@ -33,6 +33,13 @@ def create_observation(session: Session, payload: ObservationCreate) -> Observat
         severity=payload.severity,
         description=payload.description,
         observed_at=payload.observed_at or datetime.now(timezone.utc),
+        # Lo que declare quien llama, y nada mas. El servicio no promociona
+        # una observacion a `measured` por su cuenta: sin autenticacion, lo
+        # unico que el sistema sabe es lo que le dijeron.
+        source_kind=payload.source_kind.value,
+        # `created_by` se queda en NULL a proposito. El endpoint no tiene
+        # ningun mecanismo para saber quien llama —no hay autenticacion— y
+        # rellenarlo con un usuario de desarrollo seria inventar un autor.
     )
     session.add(observation)
     session.commit()

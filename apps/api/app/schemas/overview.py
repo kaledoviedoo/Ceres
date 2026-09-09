@@ -20,6 +20,7 @@ celda concreta.
 from __future__ import annotations
 
 import uuid
+from datetime import date, datetime
 
 from pydantic import Field
 
@@ -40,6 +41,44 @@ class CellOverview(CeresORMSchema):
     estimated_loss_percentage: float = Field(ge=0, le=100)
     risk_score: float = Field(ge=0, le=1)
     risk_level: RiskLevel
+
+
+class TimelineMoment(CeresORMSchema):
+    """Un instante del que CERES ya ha hablado sobre este lote."""
+
+    as_of: datetime = Field(description="El momento del que habla la prediccion")
+    prediction_count: int = Field(ge=1, description="Cuantas celdas se predijeron")
+
+
+class PlotTimeline(CeresORMSchema):
+    """Respuesta de `GET /plots/{plot_id}/timeline`.
+
+    QUE ES Y POR QUE NO ES UNA LISTA DE FECHAS INVENTADA
+    ----------------------------------------------------
+    `moments` sale de los `as_of` DISTINTOS que existen en `predictions` para
+    este lote y ciclo. No es una lista que alguien haya escrito: es lo que el
+    generador --o quien sea que haya lanzado predicciones-- dejo escrito.
+
+    Existe porque el frontend necesitaba saber que instantes puede pedirle al
+    mapa y no tenia de donde sacarlos: los momentos del escenario sintetico
+    viven en `PREDICTION_MOMENTS`, dentro del generador, que la API no importa
+    ni debe importar. La alternativa era que la interfaz se los inventara o los
+    dedujera de `planted_at` y `expected_harvest_at`, y ninguna de las dos cosas
+    da los instantes correctos: t0 es siembra + 30 dias y t2 es cosecha - 7.
+
+    Un lote sin predicciones devuelve `moments` vacio, y eso es una respuesta:
+    significa que no hay ningun momento del que se pueda ensenar el estado.
+    """
+
+    plot_id: uuid.UUID
+    crop_cycle_id: uuid.UUID
+    #: Fechas del ciclo. Viajan para poder situar cada momento dentro de el, no
+    #: para usarlas COMO momentos: ninguna de las dos coincide con un `as_of`.
+    planted_at: date | None = None
+    expected_harvest_at: date | None = None
+    moments: list[TimelineMoment] = Field(
+        default_factory=list, description="En orden cronologico"
+    )
 
 
 class PlotOverview(CeresORMSchema):

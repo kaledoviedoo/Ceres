@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.domain.enums import ObservationType
+from app.domain.enums import ObservationType, Provenance
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, UUIDType
 
 if TYPE_CHECKING:
@@ -29,6 +29,10 @@ class Observation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         CheckConstraint(
             "type IN ('pest', 'disease', 'water_stress', 'physical_damage', 'other')",
             name="type_valid",
+        ),
+        CheckConstraint(
+            "source_kind IN ('measured', 'derived', 'estimated', 'synthetic', 'unknown')",
+            name="observations_source_kind_valid",
         ),
     )
 
@@ -54,6 +58,16 @@ class Observation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         UUIDType, ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    #: De donde sale esta observacion.
+    #:
+    #: Solo `measured` mueve el estado derivado de la celda. El defecto es
+    #: `synthetic` y no `measured` por la misma razon que en el resto del
+    #: contrato: una medicion inexistente es la unica mentira que un cliente no
+    #: puede detectar.
+    source_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=Provenance.SYNTHETIC.value
     )
 
     cell: Mapped["GridCell"] = relationship(back_populates="observations")

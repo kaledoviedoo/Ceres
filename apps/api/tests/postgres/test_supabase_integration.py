@@ -117,23 +117,31 @@ def test_timestamptz_carries_timezone(pg_session, seeded_prediction):
 
 
 def test_seed_loaded_the_full_dataset(pg_session):
+    """Los recuentos de la FINCA DEMO, acotados a ella.
+
+    Contaban filas de toda la base, y eso dejo de significar "el seed de demo"
+    cuando entro la finca sintetica La Cuadricula (40.000 celdas mas). Se acotan
+    por `farm_id` en vez de bajar el listón: lo que este test vigila es que el
+    seed de demo siga cargando exactamente su lote de 20 x 20, y eso sigue
+    siendo comprobable con las dos fincas en la misma base.
+    """
     counts = pg_session.execute(
         text("""
+        WITH demo AS (SELECT id FROM farms WHERE name = 'CERES Demo Farm'),
+             lotes AS (SELECT id FROM plots WHERE farm_id IN (SELECT id FROM demo))
         SELECT
-          (SELECT count(*) FROM organizations) AS orgs,
-          (SELECT count(*) FROM farms)         AS farms,
-          (SELECT count(*) FROM plots)         AS plots,
-          (SELECT count(*) FROM crops)         AS crops,
-          (SELECT count(*) FROM crop_cycles)   AS cycles,
-          (SELECT count(*) FROM grid_cells)    AS cells,
-          (SELECT count(*) FROM observations)  AS observations
+          (SELECT count(*) FROM demo)                                          AS farms,
+          (SELECT count(*) FROM lotes)                                         AS plots,
+          (SELECT count(*) FROM crop_cycles WHERE plot_id IN (SELECT id FROM lotes)) AS cycles,
+          (SELECT count(*) FROM grid_cells  WHERE plot_id IN (SELECT id FROM lotes)) AS cells,
+          (SELECT count(*) FROM observations o
+             JOIN grid_cells g ON g.id = o.cell_id
+            WHERE g.plot_id IN (SELECT id FROM lotes))                         AS observations
         """)
     ).one()
 
-    assert counts.orgs == 1
     assert counts.farms == 1
     assert counts.plots == 1
-    assert counts.crops == 1
     assert counts.cycles == 1
     assert counts.cells == 400  # un lote de 20 x 20
     assert counts.observations == 24
@@ -305,7 +313,13 @@ def test_sql_view_matches_the_python_layer(pg_client, pg_session, seeded_cell, s
     """El requisito 6 de la fase 4.5: SQL y Python deben coincidir exactamente."""
     prediction = pg_client.post(
         "/api/v1/predictions",
-        json={"cell_id": str(seeded_cell), "crop_cycle_id": str(seeded_cycle)},
+        json={
+            "cell_id": str(seeded_cell),
+            "crop_cycle_id": str(seeded_cycle),
+            # Desde 0007 el emparejamiento es temporal: una prediccion posterior
+            # a la cosecha no produce error, porque no predijo nada.
+            "as_of": "2026-06-01T09:00:00+00:00",
+        },
     ).json()
 
     pg_client.post(
@@ -341,7 +355,13 @@ def test_sql_view_matches_the_python_layer(pg_client, pg_session, seeded_cell, s
 def test_view_leaves_error_null_without_harvest(pg_client, pg_session, seeded_cell, seeded_cycle):
     prediction = pg_client.post(
         "/api/v1/predictions",
-        json={"cell_id": str(seeded_cell), "crop_cycle_id": str(seeded_cycle)},
+        json={
+            "cell_id": str(seeded_cell),
+            "crop_cycle_id": str(seeded_cycle),
+            # Desde 0007 el emparejamiento es temporal: una prediccion posterior
+            # a la cosecha no produce error, porque no predijo nada.
+            "as_of": "2026-06-01T09:00:00+00:00",
+        },
     ).json()
 
     row = pg_session.execute(
@@ -364,10 +384,15 @@ def test_health_reports_the_real_database(pg_client):
 
 
 def test_read_endpoints_against_postgres(pg_client):
-    farms = pg_client.get("/api/v1/farms").json()
-    assert len(farms) == 1
+    """La finca demo se lee entera, con o sin otras fincas al lado.
 
-    farm = pg_client.get(f"/api/v1/farms/{farms[0]['id']}").json()
+    Se busca por nombre en vez de dar por hecho que es la unica: desde que
+    existe La Cuadricula, `/farms` devuelve dos.
+    """
+    farms = pg_client.get("/api/v1/farms").json()
+    demo = next(f for f in farms if f["name"] == "CERES Demo Farm")
+
+    farm = pg_client.get(f"/api/v1/farms/{demo['id']}").json()
     assert len(farm["plots"]) == 1
 
     plot_a = next(p for p in farm["plots"] if p["code"] == "A")
@@ -381,7 +406,13 @@ def test_read_endpoints_against_postgres(pg_client):
 def test_prediction_endpoint_persists_in_postgres(pg_client, pg_session, seeded_cell, seeded_cycle):
     body = pg_client.post(
         "/api/v1/predictions",
-        json={"cell_id": str(seeded_cell), "crop_cycle_id": str(seeded_cycle)},
+        json={
+            "cell_id": str(seeded_cell),
+            "crop_cycle_id": str(seeded_cycle),
+            # Desde 0007 el emparejamiento es temporal: una prediccion posterior
+            # a la cosecha no produce error, porque no predijo nada.
+            "as_of": "2026-06-01T09:00:00+00:00",
+        },
     ).json()
 
     stored = pg_session.execute(
@@ -390,7 +421,9 @@ def test_prediction_endpoint_persists_in_postgres(pg_client, pg_session, seeded_
     ).one()
 
     assert stored.projected_yield_kg == body["projected_yield_kg"]
-    assert stored.model_version == "rule-based-v0.1"
+    # Compuesta: motor + modelo de impacto. Una prediccion guardada deriva el
+    # estado antes de predecir, asi que pasan dos modelos por ella.
+    assert stored.model_version == "rule-based-v0.1+impact-v0"
     assert stored.factors["soil_factor"] == body["factors"]["soil_factor"]
 
 
@@ -398,7 +431,16 @@ def test_api_result_matches_the_engine_on_real_data(pg_client, pg_session, seede
     cell = pg_session.execute(
         text("SELECT * FROM grid_cells WHERE id = :id"), {"id": seeded_cell}
     ).one()
-    crop = pg_session.execute(text("SELECT * FROM crops LIMIT 1")).one()
+    # El cultivo DEL CICLO, no el primero de la tabla: desde La Cuadricula hay
+    # cinco y el motor tiene que recibir el mismo que uso la API.
+    crop = pg_session.execute(
+        text("""
+        SELECT cr.* FROM crops cr
+        JOIN crop_cycles cy ON cy.crop_id = cr.id
+        WHERE cy.id = :cycle
+        """),
+        {"cycle": seeded_cycle},
+    ).one()
 
     expected = predict_from_input(
         PredictionInput(
@@ -421,7 +463,13 @@ def test_api_result_matches_the_engine_on_real_data(pg_client, pg_session, seede
 
     body = pg_client.post(
         "/api/v1/predictions",
-        json={"cell_id": str(seeded_cell), "crop_cycle_id": str(seeded_cycle)},
+        json={
+            "cell_id": str(seeded_cell),
+            "crop_cycle_id": str(seeded_cycle),
+            # Desde 0007 el emparejamiento es temporal: una prediccion posterior
+            # a la cosecha no produce error, porque no predijo nada.
+            "as_of": "2026-06-01T09:00:00+00:00",
+        },
     ).json()
 
     assert body["projected_yield_kg"] == expected.projected_yield_kg
@@ -433,7 +481,13 @@ def test_history_is_append_only_through_the_api(pg_client, pg_session, seeded_ce
     ids = [
         pg_client.post(
             "/api/v1/predictions",
-            json={"cell_id": str(seeded_cell), "crop_cycle_id": str(seeded_cycle)},
+            json={
+            "cell_id": str(seeded_cell),
+            "crop_cycle_id": str(seeded_cycle),
+            # Desde 0007 el emparejamiento es temporal: una prediccion posterior
+            # a la cosecha no produce error, porque no predijo nada.
+            "as_of": "2026-06-01T09:00:00+00:00",
+        },
         ).json()["id"]
         for _ in range(3)
     ]
@@ -580,7 +634,13 @@ def test_full_cycle_supabase_to_performance(pg_client, pg_session, seeded_cell, 
     """Supabase -> FastAPI -> motor -> prediccion -> cosecha -> performance."""
     prediction = pg_client.post(
         "/api/v1/predictions",
-        json={"cell_id": str(seeded_cell), "crop_cycle_id": str(seeded_cycle)},
+        json={
+            "cell_id": str(seeded_cell),
+            "crop_cycle_id": str(seeded_cycle),
+            # Desde 0007 el emparejamiento es temporal: una prediccion posterior
+            # a la cosecha no produce error, porque no predijo nada.
+            "as_of": "2026-06-01T09:00:00+00:00",
+        },
     )
     assert prediction.status_code == 201
     predicted = prediction.json()["projected_yield_kg"]
@@ -637,11 +697,18 @@ def test_reapplying_the_seed_does_not_duplicate_rows(pg_session):
     sql = render_seed(build_demo_dataset())
 
     def counts():
+        # Solo las filas de la finca demo: reaplicar SU seed no puede cambiar
+        # las de La Cuadricula, y contarlas juntas escondia ese hecho.
         return pg_session.execute(
             text("""
-            SELECT (SELECT count(*) FROM grid_cells)   AS cells,
-                   (SELECT count(*) FROM observations) AS observations,
-                   (SELECT count(*) FROM plots)        AS plots
+            WITH demo AS (SELECT id FROM farms WHERE name = 'CERES Demo Farm'),
+                 lotes AS (SELECT id FROM plots WHERE farm_id IN (SELECT id FROM demo))
+            SELECT (SELECT count(*) FROM grid_cells
+                     WHERE plot_id IN (SELECT id FROM lotes))                  AS cells,
+                   (SELECT count(*) FROM observations o
+                      JOIN grid_cells g ON g.id = o.cell_id
+                     WHERE g.plot_id IN (SELECT id FROM lotes))                AS observations,
+                   (SELECT count(*) FROM lotes)                                AS plots
             """)
         ).one()
 

@@ -19,7 +19,12 @@ class PerformanceEntry(CeresORMSchema):
     """Una prediccion emparejada con su cosecha real, si existe."""
 
     prediction_id: uuid.UUID
+    #: Cuando se EJECUTO el calculo.
     predicted_at: datetime
+    #: De que momento HABLA la prediccion. Es lo que decide si precede a la
+    #: cosecha, y por tanto si su error es un error de prediccion.
+    #: `None` en predicciones sin fechar, que no se emparejan con nada.
+    as_of: datetime | None = None
     model_version: str
 
     projected_yield_kg: float = Field(ge=0)
@@ -37,6 +42,11 @@ class PerformanceEntry(CeresORMSchema):
     #: absolute_error_kg / real * 100. None si no hay cosecha o si el real es 0
     #: (no se puede dividir; se deja explicito en vez de inventar un numero).
     percentage_error: float | None = Field(default=None, ge=0)
+
+    #: Los campos de cosecha van vacios en DOS casos que conviene no confundir:
+    #: que no haya cosecha registrada, y que la prediccion sea POSTERIOR a ella.
+    #: Los dos significan "no hay error medible aqui", que es la respuesta
+    #: honesta; distinguirlos requeriria un estado que hoy nadie necesita.
 
 
 class CellPerformance(CeresORMSchema):
