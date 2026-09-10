@@ -127,12 +127,24 @@ export default function CeresPage() {
   // Métricas del motor: dan el color. Petición aparte de la del terreno porque
   // son dos cosas distintas —cómo ES la parcela y qué predice el motor sobre
   // ella—, y solo esta depende del momento.
+  //
+  // ESPERA A QUE `/timeline` TERMINE. `overviewAsOf` sale de `moments`, y
+  // mientras la línea de tiempo está en vuelo vale `null`: sin esta espera el
+  // mapa se pedía DOS veces por cambio de lote —primero sin momento, después
+  // con él— y la primera respuesta, 2 MB y 1,4 s, se tiraba entera al llegar
+  // la segunda.
+  //
+  // Se espera a que TERMINE, no a que tenga éxito: si `/timeline` falla,
+  // `isLoading` baja igual y el mapa se pide con el estado base, que es lo
+  // único afirmable cuando no se sabe de qué momento hablar. `isLoading` va en
+  // las dependencias porque es lo que dispara la petición al bajar: en un lote
+  // sin momentos `overviewAsOf` no cambia y, sin ella, el mapa no se pediría.
   const overview = useApiResource(
-    selectedPlotId && selectedCropCycleId
+    selectedPlotId && selectedCropCycleId && !timeline.isLoading
       ? (signal) =>
           ceresApi.getPlotOverview(selectedPlotId, selectedCropCycleId, overviewAsOf, signal)
       : null,
-    [selectedPlotId, selectedCropCycleId, overviewAsOf],
+    [selectedPlotId, selectedCropCycleId, overviewAsOf, timeline.isLoading],
   );
 
   const cell = useApiResource(
@@ -270,7 +282,10 @@ export default function CeresPage() {
   );
 
   const plot = farm.data?.plots.find((item) => item.id === selectedPlotId) ?? null;
-  const isLoadingTerrain = terrain.isLoading || overview.isLoading;
+  // La línea de tiempo cuenta como carga del terreno: mientras no se sabe de
+  // qué momento pintar, el mapa aún no se ha pedido, y sin esto el lienzo se
+  // quedaba en blanco entre que llegan las celdas y llega la línea.
+  const isLoadingTerrain = terrain.isLoading || timeline.isLoading || overview.isLoading;
   // Un contrato roto se trata como un fallo de carga y no como un caso a
   // resolver adivinando: si dos respuestas no se ponen de acuerdo sobre cuánto
   // mide el lote, dibujarlo con cualquiera de las dos sería inventar la escala.
