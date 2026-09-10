@@ -415,7 +415,22 @@ export function CellInspector({
         />
 
         <div className="mt-4">
-          <PredictionPanel cellId={cell.id} cropCycleId={cropCycleId} asOf={asOf} />
+          <PredictionPanel
+            cellId={cell.id}
+            cropCycleId={cropCycleId}
+            asOf={asOf}
+            // Guardar cambia dos cosas de esta ficha: la serie del histórico y
+            // la entrada del momento que se está viendo. Se recargan con la
+            // celda, el ciclo y el momento ACTUALES —`reload` no lleva
+            // argumentos a propósito—: si el usuario ya cambió de momento
+            // cuando el POST responde, lo que se refresca es lo que ve, no lo
+            // que guardó. Sin momento no hay bloque de rendimiento y ese
+            // `reload` no pide nada.
+            onSaved={() => {
+              history.reload();
+              performance.reload();
+            }}
+          />
         </div>
       </Block>
     </div>

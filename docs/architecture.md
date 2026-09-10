@@ -209,6 +209,15 @@ un notebook y sustituirlo por un modelo estadistico sin tocar nada mas.
 10. **Colorear el mapa no escribe en el historico.** `GET /plots/{id}/overview`
     ejecuta el motor sobre las 400 celdas y tira el resultado; guardar una
     prediccion es un acto deliberado del usuario sobre una celda concreta.
+11. **Guardar avisa a quien depende de lo guardado.** `PredictionPanel` hace el
+    `POST`, pero el historico y la prediccion contra la cosecha los posee el
+    Cell Inspector. Tras un `201` el panel llama a `onSaved` y el inspector
+    recarga esos dos recursos —`GET /cells/{id}/predictions` y
+    `GET /cells/{id}/performance` con la celda, el ciclo y el momento que se
+    estan VIENDO en ese instante, no los del POST—. Un POST fallido no recarga
+    nada, y un POST que responde cuando ya se mira otra celda tampoco. No hay
+    cache que invalidar: `useApiResource` no lo es, y el aviso es lo unico que
+    hay entre la escritura y la pantalla.
 
 ## Que deja preparado esta arquitectura (sin implementarlo)
 
