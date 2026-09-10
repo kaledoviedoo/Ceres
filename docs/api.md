@@ -39,7 +39,8 @@ un schema Pydantic.
 | GET | `/cells/{cell_id}/performance` | `CellPerformance` | ✅ |
 
 `/cells/{id}/predictions` y `/cells/{id}/performance` aceptan `?crop_cycle_id=`
-para filtrar por temporada.
+para filtrar por temporada. El ciclo se verifica, no solo se filtra: 404 si no
+existe, 409 si es de otro lote, los mismos codigos que al escribir.
 
 `/plots/{id}/overview` y `/cells/{id}/performance` aceptan ademas `?as_of=`, y
 **no significa lo mismo en los dos**:
@@ -190,6 +191,12 @@ Se evalua **el historial completo**, no solo la ultima prediccion. Con `?as_of=`
 la lista se acota a la prediccion de ese instante: exactamente una entrada, o
 ninguna si CERES nunca hablo de ese momento para esa celda. Ninguna es una
 respuesta, no un error.
+
+`?crop_cycle_id=` se **verifica**, no solo filtra: un ciclo que no existe es un
+404 y uno de otro lote un 409, los mismos codigos que al escribir. Una lista
+vacia significa "ciclo valido, todavia sin predicciones" y nada mas; antes
+tambien podia significar "ciclo ajeno" o "ciclo inexistente", y las tres
+respuestas eran identicas.
 
 `predicted_at` y `as_of` son cosas distintas: cuando se EJECUTO el calculo y de
 que momento HABLA. Una serie ordenada por el primero mezcla el orden de

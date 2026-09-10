@@ -32,9 +32,9 @@ from app.domain.performance import (
     percentage_error,
     prediction_precedes_harvest,
 )
-from app.models import Harvest, Prediction
+from app.models import CropCycle, Harvest, Prediction
 from app.schemas.performance import CellPerformance, PerformanceEntry
-from app.services.errors import NotFoundError
+from app.services.errors import ConflictError, NotFoundError
 from app.services.farms import get_cell
 
 
@@ -59,8 +59,23 @@ def get_cell_performance(
     rendimiento real no depende del momento desde el que se mire; lo que cambia
     es la prediccion con la que se compara. Por eso el filtro se aplica solo a
     la consulta de predicciones.
+
+    EL CICLO SE VERIFICA, no solo se filtra por el. Un ciclo que no existe es un
+    404 y uno de otro lote un 409, igual que al escribir: si leer no protesta y
+    escribir si, un cliente puede creer que el par es valido porque la lectura
+    devolvio una lista vacia. Antes las tres preguntas —ciclo ajeno, ciclo
+    inexistente, ciclo legitimo sin predicciones— recibian la misma respuesta.
     """
     cell = get_cell(session, cell_id)
+
+    if crop_cycle_id is not None:
+        cycle = session.get(CropCycle, crop_cycle_id)
+        if cycle is None:
+            raise NotFoundError("CropCycle", crop_cycle_id)
+        if cycle.plot_id != cell.plot_id:
+            raise ConflictError(
+                f"La celda {cell.cell_code} no pertenece al lote del ciclo {cycle.slug}"
+            )
 
     prediction_query = select(Prediction).where(Prediction.cell_id == cell_id)
     harvest_query = select(Harvest).where(Harvest.cell_id == cell_id)

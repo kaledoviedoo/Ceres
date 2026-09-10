@@ -158,11 +158,24 @@ def list_predictions_for_cell(
     cell_id: uuid.UUID,
     crop_cycle_id: uuid.UUID | None = None,
 ) -> list[Prediction]:
-    """Historial de la celda, mas reciente primero."""
-    get_cell(session, cell_id)  # 404 si la celda no existe
+    """Historial de la celda, mas reciente primero.
+
+    El ciclo, si se pide, SE VERIFICA: 404 si no existe, 409 si es de otro
+    lote, igual que al escribir. Antes era solo un filtro, y un ciclo ajeno o
+    inexistente devolvia la misma lista vacia que un ciclo legitimo sin
+    predicciones.
+    """
+    cell = get_cell(session, cell_id)
 
     statement = select(Prediction).where(Prediction.cell_id == cell_id)
     if crop_cycle_id is not None:
+        cycle = session.get(CropCycle, crop_cycle_id)
+        if cycle is None:
+            raise NotFoundError("CropCycle", crop_cycle_id)
+        if cycle.plot_id != cell.plot_id:
+            raise ConflictError(
+                f"La celda {cell.cell_code} no pertenece al lote del ciclo {cycle.slug}"
+            )
         statement = statement.where(Prediction.crop_cycle_id == crop_cycle_id)
 
     return list(
