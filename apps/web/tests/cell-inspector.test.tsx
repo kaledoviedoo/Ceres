@@ -11,7 +11,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CellInspector } from "@/components/cell-inspector/CellInspector";
-import { CELL_ID, CYCLE_ID, cellDetail, cellOverview, farmDetail, prediction } from "./fixtures";
+import { ElevationField, gridElevationSource } from "@/lib/terrain/elevation";
+import { CELL_ID, CYCLE_ID, cellDetail, cellOverview, farmDetail, prediction, malla } from "./fixtures";
 
 function renderInspector(props: Partial<Parameters<typeof CellInspector>[0]> = {}) {
   return render(
@@ -19,6 +20,8 @@ function renderInspector(props: Partial<Parameters<typeof CellInspector>[0]> = {
       cell={cellDetail}
       overview={cellOverview}
       cells={[cellOverview]}
+      overviewPersisted={false}
+      asOf={null}
       // Sin campo de elevación: la nota de procedencia es opcional y su
       // ausencia no debe romper la ficha.
       field={null}
@@ -102,16 +105,34 @@ describe("contenido", () => {
     expect(screen.getByText(/nivel de riesgo:/i)).toBeInTheDocument();
   });
 
-  it("distingue el estado guardado de la estimación no guardada", () => {
-    // Confundirlos sería el error más caro: el valor del Digital Twin está en
-    // poder separar lo que se midió de lo que se estimó.
+  it("distingue la entrada del modelo de la estimación no guardada", () => {
+    // Confundirlas sería el error más caro: el valor del Digital Twin está en
+    // poder separar de dónde sale cada número.
     renderInspector();
 
-    // Lo MEDIDO y lo ESTIMADO llevan bloque propio y nota de origen.
+    // Cada bloque lleva su nota de origen.
     expect(screen.getByText(/condición del terreno/i)).toBeInTheDocument();
     expect(screen.getByText(/rendimiento estimado/i)).toBeInTheDocument();
-    expect(screen.getByText("Medido")).toBeInTheDocument();
+    expect(screen.getByText("Entrada del modelo")).toBeInTheDocument();
     expect(screen.getAllByText(/sin guardar/i).length).toBeGreaterThan(0);
+  });
+
+  it("NO llama medido a nada, porque nada se midió", () => {
+    // Este bloque decía "Medido" sobre suelo, sanidad, densidad y factor
+    // residual. Ninguno de los cuatro es una medición de campo: llegan en la
+    // ficha de la celda y alimentan el motor. La palabra convertía una entrada
+    // del modelo en una observación, que es exactamente la confusión que este
+    // panel existe para evitar.
+    renderInspector();
+    expect(screen.queryByText("Medido")).not.toBeInTheDocument();
+  });
+
+  it("la pendiente se presenta como derivada, no como levantamiento", () => {
+    // Va junto a unas coordenadas con seis decimales y una altitud con dos, y
+    // en esa compañía se lee como topografía medida. El backend la deriva de la
+    // elevación con `np.gradient`, y esa elevación es sintética.
+    renderInspector();
+    expect(screen.getByText(/derivada de la elevación/i)).toBeInTheDocument();
   });
 });
 
@@ -201,5 +222,59 @@ describe("fidelidad con el backend", () => {
     expect(screen.getByText("0,1492")).toBeInTheDocument();
     // Una sola vez: la insignia de la cabecera. La fila duplicada se retiro.
     expect(screen.getAllByText("Bajo")).toHaveLength(1);
+  });
+});
+
+describe("la extensión del lote sale del dato, no de suponer 1 m", () => {
+  it("con celdas de 1 m dice 20 × 20 m, como siempre", () => {
+    const plot = farmDetail.plots[0]!;
+    const field = new ElevationField(
+      gridElevationSource(alturasDePrueba(), malla(20, 20, plot.cell_size_m)),
+      plot.cell_size_m,
+    );
+    renderInspector({ cell: null, field, plot });
+    expect(screen.getByText(/en 20 × 20 m/)).toBeInTheDocument();
+  });
+
+  it("con celdas de 0,5 m dice 10 × 10 m", () => {
+    // La frase leía el RECUENTO de celdas y le pegaba una "m". Sobre este lote
+    // habría afirmado 20 × 20 m de terreno donde hay 10 × 10.
+    const plot = { ...farmDetail.plots[0]!, cell_size_m: 0.5 };
+    const field = new ElevationField(
+      gridElevationSource(alturasDePrueba(), malla(20, 20, 0.5)),
+      0.5,
+    );
+    renderInspector({ cell: null, field, plot });
+    expect(screen.getByText(/en 10 × 10 m/)).toBeInTheDocument();
+  });
+});
+
+/** Un relieve mínimo: el bloque solo aparece si hay desnivel que contar. */
+function alturasDePrueba() {
+  const cells = [];
+  for (let y = 0; y < 20; y += 1) {
+    for (let x = 0; x < 20; x += 1) cells.push({ x, y, elevation_m: 1180 + y * 0.1 });
+  }
+  return cells;
+}
+
+describe("guardado o no, lo dice la API", () => {
+  it("`persisted: false` se rotula como no guardado", () => {
+    // Es el caso de hoy: `/plots/{id}/overview` calcula al vuelo y lo tira, y lo
+    // declara en la respuesta. La interfaz lo escribía a mano.
+    renderInspector({ overviewPersisted: false });
+    expect(screen.getAllByText(/sin guardar/i).length).toBeGreaterThan(0);
+  });
+
+  it("`persisted: true` se rotula como guardado", () => {
+    /*
+     * No hay ningún endpoint que hoy devuelva `true`, y ese es justamente el
+     * motivo de este test: cuando lo haya, el rótulo tiene que cambiar solo. Con
+     * el texto escrito a mano habría seguido diciendo "Sin guardar" sobre datos
+     * guardados, y nadie lo habría notado.
+     */
+    renderInspector({ overviewPersisted: true });
+    expect(screen.getByText("Guardado")).toBeInTheDocument();
+    expect(screen.queryByText("Sin guardar")).not.toBeInTheDocument();
   });
 });

@@ -12,7 +12,8 @@
  * backend vivo" en el mismo sitio obliga a leer dos cosas para encontrar una.
  */
 
-import type { CropCycle, Farm, Plot } from "@/lib/types/api";
+import { TimelineSwitch } from "@/components/dashboard/TimelineSwitch";
+import type { CropCycle, Farm, Plot, TimelineMoment } from "@/lib/types/api";
 
 interface TopStripProps {
   farms: Farm[];
@@ -22,6 +23,19 @@ interface TopStripProps {
   selectedCropCycleId: string | null;
   onSelectFarm: (id: string) => void;
   onSelectCropCycle: (id: string) => void;
+  /**
+   * Momentos del ciclo y cuál está activo.
+   *
+   * Va aquí y no con los controles del pie porque es la misma clase de
+   * pregunta que las otras tres de esta franja: finca › lote › ciclo › CUÁNDO.
+   * Los del pie responden a "qué métrica" y "desde dónde miras", que son otra
+   * cosa. El control se retira solo cuando el lote no tiene momentos.
+   */
+  moments: TimelineMoment[];
+  selectedAsOf: string | null;
+  /** `planted_at` del ciclo: sitúa cada momento, nunca se usa COMO momento. */
+  plantedAt: string | null;
+  onSelectAsOf: (asOf: string) => void;
 }
 
 const SELECT_CLASS =
@@ -35,6 +49,10 @@ export function TopStrip({
   selectedCropCycleId,
   onSelectFarm,
   onSelectCropCycle,
+  moments,
+  selectedAsOf,
+  plantedAt,
+  onSelectAsOf,
 }: TopStripProps) {
   return (
     <header className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start gap-4 px-6 py-4">
@@ -99,6 +117,18 @@ export function TopStrip({
         </label>
       </div>
 
+      {/* El eje temporal. Pastilla aparte y no dentro del rastro de migas: el
+          rastro dice DÓNDE estás y esto dice CUÁNDO, y son dos gestos
+          distintos —uno se lee, el otro se pulsa—. Además así la franja no
+          cambia de ancho al aparecer o desaparecer el control. */}
+      <div className="pointer-events-auto">
+        <TimelineSwitch
+          moments={moments}
+          value={selectedAsOf}
+          plantedAt={plantedAt}
+          onChange={onSelectAsOf}
+        />
+      </div>
     </header>
   );
 }

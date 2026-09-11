@@ -18,6 +18,8 @@
 
 import type { ReactNode } from "react";
 
+import { percentileLabel } from "@/lib/terrain/statistics";
+
 // --- Barra con posición en el reparto ---------------------------------------
 
 interface MetricBarProps {
@@ -49,7 +51,7 @@ export function MetricBar({ label, value, fill, percentile, tone }: MetricBarPro
           aria-label={`${label}: ${value}${
             percentile === undefined
               ? ""
-              : `, percentil ${Math.round(percentile * 100)} del lote`
+              : `, percentil ${percentileLabel(percentile)} del lote`
           }`}
         >
           <div
@@ -59,7 +61,7 @@ export function MetricBar({ label, value, fill, percentile, tone }: MetricBarPro
         </div>
         {percentile !== undefined && (
           <span className="tabular w-9 shrink-0 text-right text-[10px] text-muted">
-            p{Math.round(percentile * 100)}
+            p{percentileLabel(percentile)}
           </span>
         )}
       </div>

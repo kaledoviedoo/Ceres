@@ -10,6 +10,7 @@ import { apiClient } from "@/lib/api/client";
 import type {
   CellCollection,
   CellDetail,
+  CellPerformance,
   CropCycle,
   FarmDetail,
   Farm,
@@ -18,6 +19,7 @@ import type {
   Observation,
   Plot,
   PlotOverview,
+  PlotTimeline,
   Prediction,
   PredictionList,
   PredictionRequest,
@@ -49,10 +51,35 @@ export const ceresApi = {
    * No persiste nada: son métricas calculadas al vuelo. Guardar una predicción
    * sigue siendo cosa de `createPrediction`, al hacer click en una celda.
    */
-  getPlotOverview: (plotId: string, cropCycleId: string, signal?: AbortSignal) =>
+  /**
+   * De qué momentos puede el mapa enseñar el estado de este lote.
+   *
+   * Los devuelve la API leyendo `predictions.as_of`. El frontend no construye
+   * ninguna fecha: pasa tal cual el `as_of` que elija el usuario.
+   */
+  getPlotTimeline: (plotId: string, cropCycleId: string, signal?: AbortSignal) =>
+    apiClient.get<PlotTimeline>(
+      `/api/v1/plots/${plotId}/timeline`,
+      { crop_cycle_id: cropCycleId },
+      signal,
+    ),
+
+  /**
+   * Métricas del motor para colorear la malla.
+   *
+   * `asOf` decide de qué momento se pinta el mapa. Sin él se usa el estado
+   * base, sin observaciones — que es lo que hacía que una finca con miles de
+   * observaciones fechadas saliera entera del mismo color.
+   */
+  getPlotOverview: (
+    plotId: string,
+    cropCycleId: string,
+    asOf?: string | null,
+    signal?: AbortSignal,
+  ) =>
     apiClient.get<PlotOverview>(
       `/api/v1/plots/${plotId}/overview`,
-      { crop_cycle_id: cropCycleId },
+      asOf ? { crop_cycle_id: cropCycleId, as_of: asOf } : { crop_cycle_id: cropCycleId },
       signal,
     ),
 
@@ -67,6 +94,25 @@ export const ceresApi = {
    */
   createPrediction: (payload: PredictionRequest, signal?: AbortSignal) =>
     apiClient.post<Prediction>("/api/v1/predictions", payload, signal),
+
+  /**
+   * Predicción vs cosecha real de una celda.
+   *
+   * `asOf` deja solo la predicción que habla de ese instante. FILTRA, no
+   * recalcula: este endpoint cuenta lo que CERES dijo aquel día, y eso es un
+   * hecho histórico. Sin `asOf` devuelve el historial completo.
+   */
+  getCellPerformance: (
+    cellId: string,
+    cropCycleId: string,
+    asOf?: string | null,
+    signal?: AbortSignal,
+  ) =>
+    apiClient.get<CellPerformance>(
+      `/api/v1/cells/${cellId}/performance`,
+      asOf ? { crop_cycle_id: cropCycleId, as_of: asOf } : { crop_cycle_id: cropCycleId },
+      signal,
+    ),
 
   /** Historial completo, más reciente primero. */
   listPredictions: (cellId: string, signal?: AbortSignal) =>

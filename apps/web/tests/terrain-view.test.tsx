@@ -17,7 +17,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ElevationField, gridElevationSource } from "@/lib/terrain/elevation";
 import { TerrainView } from "@/components/terrain/TerrainView";
 import { useCeresStore } from "@/stores/useCeresStore";
-import { buildTerrainCells } from "./fixtures";
+import { buildTerrainCells, malla } from "./fixtures";
 
 vi.mock("@/components/terrain/TerrainCanvas", () => ({
   TerrainCanvas: ({
@@ -41,8 +41,8 @@ function renderTerrain() {
   const cells = buildTerrainCells();
   // El campo de elevación se construye desde las mismas celdas, igual que en la
   // página: la vista solo lo reparte, no lo deriva.
-  const campo = new ElevationField(gridElevationSource(cells, 20, 20));
-  const view = render(<TerrainView field={campo} cells={cells} gridWidth={20} gridHeight={20} />);
+  const campo = new ElevationField(gridElevationSource(cells, malla(20, 20)), 1);
+  const view = render(<TerrainView field={campo} cells={cells} plot={malla(20, 20)} />);
   return { cells, view };
 }
 
@@ -81,8 +81,8 @@ describe("TerrainView", () => {
       useCeresStore.setState(initial, true);
       useCeresStore.getState().setTerrainMode("2d");
     });
-    const campo = new ElevationField(gridElevationSource(cells, 20, 20));
-    render(<TerrainView field={campo} cells={cells} gridWidth={20} gridHeight={20} />);
+    const campo = new ElevationField(gridElevationSource(cells, malla(20, 20)), 1);
+    render(<TerrainView field={campo} cells={cells} plot={malla(20, 20)} />);
 
     await user.click(screen.getByTestId(`cell-${cells[7]!.cell_code}`));
     expect(useCeresStore.getState().selectedCellId).toBe(desdeElCanvas);
@@ -100,7 +100,7 @@ describe("TerrainView", () => {
     render(<SoloSeleccion />);
     const antes = renders.mock.calls.length;
 
-    act(() => useCeresStore.getState().setViewMode("yield"));
+    act(() => useCeresStore.getState().setActiveLayer("yield"));
     expect(renders.mock.calls.length).toBe(antes);
 
     act(() => useCeresStore.getState().selectCell("celda-x"));

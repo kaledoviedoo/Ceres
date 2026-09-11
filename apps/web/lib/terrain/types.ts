@@ -18,6 +18,16 @@ export interface TerrainCell extends CellOverview {
   elevation_m: number;
   /** Grados. Se muestra en la etiqueta de hover; no interviene en la geometría. */
   slope_deg: number;
+  /**
+   * Calidad de suelo y estado sanitario, de 0 a 1.
+   *
+   * Vienen del mismo endpoint que la elevación y están completos en las 400
+   * celdas —comprobado contra la API—. Se traen al modelo del terreno porque son
+   * capas analíticas reales; no intervienen en la geometría, igual que la
+   * pendiente.
+   */
+  soil_quality: number;
+  health_factor: number;
 }
 
 /**
@@ -37,7 +47,13 @@ export function joinTerrainCells(
   for (const metric of metrics) {
     const cell = byId.get(metric.cell_id);
     if (!cell) continue;
-    joined.push({ ...metric, elevation_m: cell.elevation_m, slope_deg: cell.slope_deg });
+    joined.push({
+      ...metric,
+      elevation_m: cell.elevation_m,
+      slope_deg: cell.slope_deg,
+      soil_quality: cell.soil_quality,
+      health_factor: cell.health_factor,
+    });
   }
   return joined;
 }

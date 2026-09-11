@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Malla 20×20 del lote. Cada cuadro es ~1 m².
+ * Malla del lote: un cuadro por celda. El tamaño físico de la celda NO se
+ * conoce aquí —lo declara `cell_size_m` y lo usa la rama geométrica—.
  *
  * VISTA ALTERNA. El terreno 3D es la representación principal; esta malla plana
  * se conserva para tres cosas que el canvas no cubre: reserva cuando WebGL no
@@ -26,15 +27,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CellSquare } from "@/components/terrain/CellSquare";
-import { cellColor, metricRange, type ViewMode } from "@/lib/presentation/risk";
 import { zoneBorders } from "@/lib/terrain/analysis";
-import type { CellOverview } from "@/lib/types/api";
+import { layerCellColor, layerReading, valueSpan, type AvailableLayer } from "@/lib/terrain/layers";
+import type { TerrainCell } from "@/lib/terrain/types";
 
 export interface CellGridProps {
-  cells: CellOverview[];
+  cells: TerrainCell[];
   gridWidth: number;
   gridHeight: number;
-  viewMode: ViewMode;
+  /** La misma capa que pinta el relieve. Planta y relieve no pueden discrepar. */
+  layer: AvailableLayer;
   selectedCellId: string | null;
   onSelect: (cellId: string) => void;
 }
@@ -49,23 +51,30 @@ export function CellGrid({
   cells,
   gridWidth,
   gridHeight,
-  viewMode,
+  layer,
   selectedCellId,
   onSelect,
 }: CellGridProps) {
   // El hover es efímero y solo le importa a esta vista: estado local, no store.
   const [hoveredCellId, setHoveredCellId] = useState<string | null>(null);
-  const range = useMemo(() => metricRange(cells, viewMode), [cells, viewMode]);
+  // El recorrido de la capa activa sobre el lote: un barrido de 400 números que
+  // normaliza la rampa. La capa decide qué campo mide y con qué color.
+  const span = useMemo(() => valueSpan(layer, cells), [layer, cells]);
 
-  // Misma frontera que dibuja el relieve. El objeto por celda se reparte por
+  // Misma frontera que dibuja el relieve, y decidida en el mismo sitio: la capa.
+  // Con la capa de terreno no hay zona que anotar, y antes la planta la seguía
+  // perfilando mientras el relieve no. El objeto por celda se reparte por
   // referencia estable: el `memo` de CellSquare depende de que no cambie.
-  const borders = useMemo(() => zoneBorders(cells), [cells]);
+  const borders = useMemo(
+    () => (layer.zone ? zoneBorders(cells, layer.zone) : new Map()),
+    [cells, layer.zone],
+  );
 
   // La API devuelve las celdas ordenadas de sur a norte (y creciente), pero en
   // pantalla el norte va arriba. Se invierten las filas al pintar en vez de
   // reordenar el array: así el índice sigue coincidiendo con (x, y).
   const rows = useMemo(() => {
-    const byRow = new Map<number, CellOverview[]>();
+    const byRow = new Map<number, TerrainCell[]>();
     for (const cell of cells) {
       const row = byRow.get(cell.y) ?? [];
       row.push(cell);
@@ -162,7 +171,15 @@ export function CellGrid({
       <div
         ref={gridRef}
         role="grid"
-        aria-label={`Malla del lote, ${gridWidth} por ${gridHeight} celdas de 1 m². Usa las flechas para recorrerla.`}
+        /* El nombre dice CUANTAS celdas hay, no cuánto miden.
+           Decía "celdas de 1 m²", que era la última afirmación física
+           construida sobre la suposición de que una celda mide un metro: con
+           `cell_size_m = 0,5` le habría dicho a un lector de pantalla que cada
+           celda tiene cuatro veces su superficie real.
+           La planta no conoce el tamaño físico —y no debe: es la vista
+           topológica—, así que la medida se queda donde sí se sabe, en el
+           inspector, que la calcula desde `cell_size_m`. */
+        aria-label={`Malla del lote, ${gridWidth} por ${gridHeight} celdas. Usa las flechas para recorrerla.`}
         aria-rowcount={gridHeight}
         aria-colcount={gridWidth}
         className="w-full max-w-[680px] rounded border border-line bg-line-soft p-px"
@@ -181,8 +198,9 @@ export function CellGrid({
               <CellSquare
                 key={cell.cell_id}
                 cell={cell}
-                color={cellColor(cell, viewMode, range)}
-                viewMode={viewMode}
+                color={layerCellColor(layer, cell, span)}
+                patterned={layer.patterned}
+                reading={layerReading(layer, cell)}
                 isSelected={cell.cell_id === selectedCellId}
                 isHovered={cell.cell_id === hoveredCellId}
                 isFocusTarget={cell.x === focusX && cell.y === focusY}

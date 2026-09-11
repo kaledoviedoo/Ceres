@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.api.deps import SessionDep
 from app.schemas.cell import CellRead
@@ -67,6 +68,33 @@ def get_cell_performance(
     cell_id: uuid.UUID,
     session: SessionDep,
     crop_cycle_id: uuid.UUID | None = None,
+    as_of: datetime | None = Query(
+        None,
+        description=(
+            "Deja solo la prediccion que habla de ESE instante. Sin fecha se "
+            "devuelve el historial completo, que es el comportamiento de siempre."
+        ),
+    ),
 ) -> CellPerformance:
-    """Prediccion vs realidad. El cierre del ciclo del Digital Twin."""
-    return performance_service.get_cell_performance(session, cell_id, crop_cycle_id)
+    """Prediccion vs realidad. El cierre del ciclo del Digital Twin.
+
+    `as_of` FILTRA, no recalcula, y la diferencia importa. Este endpoint
+    responde "que predijo CERES de aquel momento", y eso es un hecho historico
+    que vive en `predictions`: rederivarlo permitiria que la respuesta cambiara
+    al cambiar el modelo, y entonces dejaria de ser un historial.
+
+    Es la diferencia con `GET /plots/{id}/overview`, que con `as_of` SI
+    recalcula: aquel pinta un estado, este cuenta lo que se dijo.
+
+    Se anadio para que el inspector pueda seguir al mismo instante que el mapa.
+    Sin el parametro, la interfaz tendria que elegir la entrada por su cuenta y
+    el momento no viajaria en la peticion: nadie podria comprobar desde fuera
+    que la ficha esta ensenando el momento que dice.
+
+    La COSECHA NO DEPENDE DE `as_of`. Es la misma celda y el mismo ciclo, asi
+    que el rendimiento real es el mismo se mire desde el momento que se mire; lo
+    que cambia es la prediccion contra la que se compara, y por tanto el error.
+    """
+    return performance_service.get_cell_performance(
+        session, cell_id, crop_cycle_id, as_of
+    )

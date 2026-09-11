@@ -19,6 +19,11 @@ Cada caso usa una celda distinta porque la vista empareja cada prediccion con la
 cosecha mas reciente de SU celda y ciclo; reutilizar una celda mezclaria los
 casos entre si.
 
+Las predicciones llevan un `as_of` anterior a la cosecha porque desde la
+migracion 0007 el emparejamiento es temporal: sin fecha anterior no hay par, y
+sin par no hay aritmetica que comparar. Lo que este test vigila sigue siendo la
+paridad de las FORMULAS, no la regla.
+
 Los tests recorren todos los casos y acumulan las discrepancias en lugar de
 parar en la primera: si una formula se rompe, se ve el patron completo de una
 vez, no un caso suelto.
@@ -70,8 +75,12 @@ def parity_rows(pg_session, seeded_cycle):
         text("""
         INSERT INTO predictions (cell_id, crop_cycle_id, model_version,
             projected_yield_kg, projected_boxes, estimated_loss_percentage,
-            risk_score, risk_level)
-        VALUES (:cell, :cycle, 'parity-test', :projected, 0, 0, 0, 'low')
+            risk_score, risk_level, as_of)
+        -- `as_of` ANTERIOR a la cosecha: sin eso la regla de emparejamiento no
+        -- empareja y este test no compararia ninguna aritmetica, que es lo
+        -- unico que viene a comprobar.
+        VALUES (:cell, :cycle, 'parity-test', :projected, 0, 0, 0, 'low',
+                '2026-06-01T09:00:00+00')
         """),
         predictions,
     )
@@ -152,7 +161,12 @@ def test_the_api_serves_the_same_numbers_as_the_view(
     """Cierra el circulo: motor -> API -> vista SQL, todo el mismo numero."""
     prediction = pg_client.post(
         "/api/v1/predictions",
-        json={"cell_id": str(seeded_cell), "crop_cycle_id": str(seeded_cycle)},
+        json={
+            "cell_id": str(seeded_cell),
+            "crop_cycle_id": str(seeded_cycle),
+            # Anterior a la cosecha: sin eso no hay par que comparar.
+            "as_of": "2026-06-01T09:00:00+00:00",
+        },
     ).json()
 
     pg_client.post(

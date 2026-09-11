@@ -46,6 +46,20 @@ export function formatDateTime(iso: string): string {
 }
 
 /**
+ * Solo la fecha, sin hora.
+ *
+ * Para `as_of`: la hora no aporta nada —los momentos del escenario caen todos a
+ * las 12:00 UTC— y en un eje de gráfico ocupa el doble sin decir más.
+ */
+export function formatDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat(LOCALE, { dateStyle: "medium", timeZone: "UTC" }).format(
+    date,
+  );
+}
+
+/**
  * Cambio relativo respecto a 1.0, con signo.
  *
  * Es como se leen los factores explicativos: `soil_factor: 1.061` -> "+6.1 %".
@@ -55,3 +69,18 @@ export function formatFactorDelta(factor: number): string {
   const sign = delta > 0 ? "+" : "";
   return `${sign}${fixed(delta, 1)} %`;
 }
+
+/**
+ * Cómo se rotula un resultado según esté guardado o no.
+ *
+ * `persisted` LO DICE LA API: `GET /plots/{id}/overview` lo trae en la respuesta
+ * porque sus métricas se calculan al vuelo y se tiran. La interfaz lo escribía a
+ * mano —"Sin guardar", literal, en dos sitios—, así que decía la verdad por
+ * coincidencia: si el endpoint hubiera empezado a persistir, los dos rótulos
+ * habrían seguido igual.
+ *
+ * Una función y no dos constantes sueltas para que las dos vistas no puedan
+ * discrepar sobre cómo se llama el mismo estado.
+ */
+export const persistenceLabel = (persisted: boolean): string =>
+  persisted ? "Guardado" : "Sin guardar";

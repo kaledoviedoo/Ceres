@@ -1,10 +1,16 @@
-# Datos sinteticos
+# Datos sinteticos — finca demo
 
 > **DEMO / SYNTHETIC DATA.** La finca no existe. Los valores son plausibles pero
 > inventados, y estan aqui para validar el sistema tecnicamente. Nada de esto es
 > una medicion de campo.
 
-> Estado: **implementado** (fase 2). Codigo en `app/core/synthetic/`.
+> Estado: **implementado** (fase 2). Codigo en `app/core/synthetic/field.py` y
+> `app/core/synthetic/demo.py`.
+
+> **Este documento describe la finca DEMO, no la unica del despliegue.** Existe
+> un segundo escenario sintetico, **La Cuadricula**, mucho mas grande y con eje
+> temporal: ver [`cuadricula.md`](cuadricula.md). Los dos conviven en la misma
+> base de datos y no comparten ni namespace de UUID ni prefijo de lote.
 
 ## Reproducibilidad
 
@@ -26,16 +32,18 @@ regeneran el dataset obtienen exactamente los mismos `cell_id`.
 | Organizacion | 1 |
 | Usuarios | 2 (owner, agronomo) |
 | Finca | 1, en Colombia |
-| Lotes | 2 (Plot A, Plot B) de 20 x 20 |
+| Lotes | 1 (Plot A) de 20 x 20 |
 | Cultivo | 1 (tomate chonto) |
 | Ciclo de cultivo | 1, sobre Plot A |
-| Celdas | 800 (400 por lote) |
+| Celdas | 400 |
 | Observaciones | 24 |
 | Zona critica | 1 foco sintetico por lote (ver abajo) |
 
-Plot B tiene terreno generado pero **no** tiene ciclo de cultivo. Es intencional:
-es exactamente el caso que justifica separar `CropCycle` de `Plot`, y deja un
-lote libre para sembrar en una temporada futura.
+Hubo un Plot B sin ciclo de cultivo, pensado para demostrar que `CropCycle` y
+`Plot` son entidades separadas. Se retiro: en la interfaz se traducia en un
+selector con una opcion que al pulsarla no mostraba nada, y eso no se lee como
+un modelo de datos bien pensado sino como un fallo. La separacion sigue
+demostrada donde corresponde --esquema, claves foraneas y tests--.
 
 La finca se ubica eligiendo una de cinco zonas agricolas reales de Colombia con
 el generador sembrado: "aleatorio" segun el brief, pero reproducible. Con la

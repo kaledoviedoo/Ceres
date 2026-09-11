@@ -35,17 +35,23 @@ import { CellInspector } from "@/components/cell-inspector/CellInspector";
 import { BottomStrips } from "@/components/dashboard/BottomStrips";
 import { PlotSelector } from "@/components/dashboard/PlotSelector";
 import { TopStrip } from "@/components/dashboard/TopStrip";
-import { RiskLegend } from "@/components/terrain/RiskLegend";
-import { SurfaceStyleSwitch } from "@/components/terrain/SurfaceStyleSwitch";
+import { DistributionPanel } from "@/components/terrain/DistributionPanel";
+import { LayerSwitch } from "@/components/terrain/LayerSwitch";
 import { TerrainModeSwitch } from "@/components/terrain/TerrainModeSwitch";
 import { TerrainView } from "@/components/terrain/TerrainView";
-import { ViewModeSwitch } from "@/components/terrain/ViewModeSwitch";
 import { ErrorState } from "@/components/ui/ErrorState";
 import { Spinner } from "@/components/ui/Spinner";
 import { ceresApi } from "@/lib/api/endpoints";
 import { useApiResource } from "@/lib/api/useApiResource";
+import {
+  agreeOnPlotGrid,
+  describeMissingGeometry,
+  missingGeometryFields,
+} from "@/lib/terrain/coords";
 import { ElevationField, gridElevationSource } from "@/lib/terrain/elevation";
+import { elevationProvenanceFrom } from "@/lib/terrain/provenance";
 import { joinTerrainCells } from "@/lib/terrain/types";
+import { getAvailableLayer } from "@/lib/terrain/layers";
 import { useCeresStore } from "@/stores/useCeresStore";
 
 export default function CeresPage() {
@@ -54,17 +60,17 @@ export default function CeresPage() {
   const selectedPlotId = useCeresStore((state) => state.selectedPlotId);
   const selectedCropCycleId = useCeresStore((state) => state.selectedCropCycleId);
   const selectedCellId = useCeresStore((state) => state.selectedCellId);
-  const viewMode = useCeresStore((state) => state.viewMode);
+  const selectedAsOf = useCeresStore((state) => state.selectedAsOf);
+  const activeLayerId = useCeresStore((state) => state.activeLayerId);
   const terrainMode = useCeresStore((state) => state.terrainMode);
-  const surfaceStyle = useCeresStore((state) => state.surfaceStyle);
 
   const selectFarm = useCeresStore((state) => state.selectFarm);
   const selectPlot = useCeresStore((state) => state.selectPlot);
   const selectCropCycle = useCeresStore((state) => state.selectCropCycle);
+  const selectAsOf = useCeresStore((state) => state.selectAsOf);
   const clearSelection = useCeresStore((state) => state.clearSelection);
-  const setViewMode = useCeresStore((state) => state.setViewMode);
+  const setActiveLayer = useCeresStore((state) => state.setActiveLayer);
   const setTerrainMode = useCeresStore((state) => state.setTerrainMode);
-  const setSurfaceStyle = useCeresStore((state) => state.setSurfaceStyle);
 
   const health = useApiResource((signal) => ceresApi.health(signal), []);
   const farms = useApiResource((signal) => ceresApi.listFarms(signal), []);
@@ -85,13 +91,60 @@ export default function CeresPage() {
     [selectedPlotId],
   );
 
-  // Métricas del motor: dan el color. Dos peticiones porque son dos cosas
-  // distintas — cómo ES la parcela y qué predice el motor sobre ella—.
-  const overview = useApiResource(
+  // De qué momentos puede el mapa enseñar el estado. Los lee la API de
+  // `predictions.as_of`; aquí no se construye ninguna fecha.
+  const timeline = useApiResource(
     selectedPlotId && selectedCropCycleId
-      ? (signal) => ceresApi.getPlotOverview(selectedPlotId, selectedCropCycleId, signal)
+      ? (signal) => ceresApi.getPlotTimeline(selectedPlotId, selectedCropCycleId, signal)
       : null,
     [selectedPlotId, selectedCropCycleId],
+  );
+
+  const moments = useMemo(() => timeline.data?.moments ?? [], [timeline.data]);
+
+  /**
+   * El instante que se está pintando.
+   *
+   * Sale del store si el usuario eligió uno; si no, del PRIMER momento del
+   * lote. Se arranca en t0 y no en el último a propósito: es lo que deja ver la
+   * historia. Se entra a un campo relativamente sano y una pulsación revela
+   * dónde y cuánto lo dañaron los eventos. Arrancando al final, la transición
+   * existe pero nadie la descubre.
+   *
+   * `null` —lote sin momentos, como los de la finca demo— pinta el estado base.
+   * Es lo único afirmable sin una fecha con la que derivar.
+   *
+   * Se VALIDA contra la lista: si el store guardara un instante de otro lote
+   * —no debería, `selectPlot` lo limpia— se pediría un mapa de una fecha que
+   * este lote no tiene. Se descarta y se cae al primero.
+   */
+  const overviewAsOf = useMemo(() => {
+    if (moments.length === 0) return null;
+    const elegido = moments.find((moment) => moment.as_of === selectedAsOf);
+    return elegido?.as_of ?? moments[0]!.as_of;
+  }, [moments, selectedAsOf]);
+
+  // Métricas del motor: dan el color. Petición aparte de la del terreno porque
+  // son dos cosas distintas —cómo ES la parcela y qué predice el motor sobre
+  // ella—, y solo esta depende del momento.
+  //
+  // ESPERA A QUE `/timeline` TERMINE. `overviewAsOf` sale de `moments`, y
+  // mientras la línea de tiempo está en vuelo vale `null`: sin esta espera el
+  // mapa se pedía DOS veces por cambio de lote —primero sin momento, después
+  // con él— y la primera respuesta, 2 MB y 1,4 s, se tiraba entera al llegar
+  // la segunda.
+  //
+  // Se espera a que TERMINE, no a que tenga éxito: si `/timeline` falla,
+  // `isLoading` baja igual y el mapa se pide con el estado base, que es lo
+  // único afirmable cuando no se sabe de qué momento hablar. `isLoading` va en
+  // las dependencias porque es lo que dispara la petición al bajar: en un lote
+  // sin momentos `overviewAsOf` no cambia y, sin ella, el mapa no se pediría.
+  const overview = useApiResource(
+    selectedPlotId && selectedCropCycleId && !timeline.isLoading
+      ? (signal) =>
+          ceresApi.getPlotOverview(selectedPlotId, selectedCropCycleId, overviewAsOf, signal)
+      : null,
+    [selectedPlotId, selectedCropCycleId, overviewAsOf, timeline.isLoading],
   );
 
   const cell = useApiResource(
@@ -129,6 +182,67 @@ export default function CeresPage() {
   }, [terrain.data, overview.data]);
 
   /**
+   * LA MALLA FISICA DEL LOTE, en un solo sitio.
+   *
+   * Las tres cifras vienen juntas de `/plots/{id}/overview` y aquí se quedan
+   * juntas. `cell_size_m` estaba declarado en tres respuestas de la API y no lo
+   * leía nadie: la geometría daba por hecho que una celda medía un metro. Al
+   * agruparlas, la única forma de situar una celda en el espacio es pasar este
+   * objeto, y no se puede construir sin decir cuánto mide su lado.
+   */
+  /**
+   * Los cinco campos sin los que no se puede situar nada.
+   *
+   * Se comprueba ANTES de acordar la malla porque son preguntas distintas:
+   * `agreeOnPlotGrid` verifica que las respuestas coincidan, y dos respuestas a
+   * las que les falta el mismo campo coinciden perfectamente en `undefined`.
+   *
+   * Las tres magnitudes salen de la malla; el ancla geográfica, del lote.
+   */
+  const missingGeometry = useMemo(() => {
+    const faltan = new Set<string>();
+    if (terrain.data) {
+      for (const f of missingGeometryFields(terrain.data, ["grid_width", "grid_height", "cell_size_m"])) {
+        faltan.add(f);
+      }
+    }
+    const lote = farm.data?.plots.find((item) => item.id === selectedPlotId);
+    if (lote) {
+      for (const f of missingGeometryFields(lote, ["origin_latitude", "origin_longitude"])) {
+        faltan.add(f);
+      }
+    }
+    return [...faltan];
+  }, [terrain.data, farm.data, selectedPlotId]);
+
+  const gridAgreement = useMemo(() => {
+    const declarado = [];
+    if (terrain.data) {
+      declarado.push({
+        source: "/plots/{id}/cells",
+        width: terrain.data.grid_width,
+        height: terrain.data.grid_height,
+        cellSizeM: terrain.data.cell_size_m,
+      });
+    }
+    if (overview.data) {
+      declarado.push({
+        source: "/plots/{id}/overview",
+        width: overview.data.grid_width,
+        height: overview.data.grid_height,
+        cellSizeM: overview.data.cell_size_m,
+      });
+    }
+    return declarado.length > 0 ? agreeOnPlotGrid(declarado) : null;
+  }, [terrain.data, overview.data]);
+
+  const plotGrid = gridAgreement && "agreed" in gridAgreement ? gridAgreement.agreed : null;
+
+  /** Si las respuestas se contradicen sobre la malla, no se dibuja nada. */
+  const gridConflict =
+    gridAgreement && "conflict" in gridAgreement ? gridAgreement.conflict : null;
+
+  /**
    * LA RAMA GEOMETRICA nace aquí, y solo recibe elevación.
    *
    * Se construye en la página y no dentro del canvas porque hay dos consumidores
@@ -139,20 +253,49 @@ export default function CeresPage() {
    * El día que entre un DEM, esta es la única línea que cambia.
    */
   const field = useMemo(() => {
-    if (!overview.data || terrainCells.length === 0) return null;
+    if (!plotGrid || terrainCells.length === 0) return null;
     return new ElevationField(
-      gridElevationSource(terrainCells, overview.data.grid_width, overview.data.grid_height),
+      gridElevationSource(
+        terrainCells,
+        plotGrid,
+        // LA PROCEDENCIA LA DICE LA API, no este componente. Si el bloque no
+        // llega, `elevationProvenanceFrom` devuelve `unknown` en vez de
+        // rellenarlo con algo plausible.
+        elevationProvenanceFrom(terrain.data?.provenance, plotGrid.cellSizeM),
+      ),
+      // El paso físico entre coordenadas de malla. Es lo que convierte una
+      // diferencia de alturas en pendiente, y no tiene nada que ver con la
+      // resolución efectiva de la fuente: esa la declara `provenance`.
+      plotGrid.cellSizeM,
     );
-  }, [terrainCells, overview.data]);
+  }, [terrainCells, plotGrid, terrain.data]);
 
   const selectedOverview = useMemo(
     () => overview.data?.cells.find((item) => item.cell_id === selectedCellId) ?? null,
     [overview.data, selectedCellId],
   );
 
+  /** La celda abierta, con su elevación: es la que sitúa el panel de reparto. */
+  const selectedTerrainCell = useMemo(
+    () => terrainCells.find((item) => item.cell_id === selectedCellId) ?? null,
+    [terrainCells, selectedCellId],
+  );
+
   const plot = farm.data?.plots.find((item) => item.id === selectedPlotId) ?? null;
-  const isLoadingTerrain = terrain.isLoading || overview.isLoading;
-  const terrainError = terrain.error ?? overview.error;
+  // La línea de tiempo cuenta como carga del terreno: mientras no se sabe de
+  // qué momento pintar, el mapa aún no se ha pedido, y sin esto el lienzo se
+  // quedaba en blanco entre que llegan las celdas y llega la línea.
+  const isLoadingTerrain = terrain.isLoading || timeline.isLoading || overview.isLoading;
+  // Un contrato roto se trata como un fallo de carga y no como un caso a
+  // resolver adivinando: si dos respuestas no se ponen de acuerdo sobre cuánto
+  // mide el lote, dibujarlo con cualquiera de las dos sería inventar la escala.
+  // Un contrato incompleto se trata como un fallo de carga, igual que uno
+  // contradictorio: dibujar sin saber cuánto mide una celda sería inventar la
+  // escala, y el resultado no se distinguiría de un terreno correcto.
+  const missingGeometryMessage =
+    missingGeometry.length > 0 ? describeMissingGeometry(missingGeometry) : null;
+  const terrainError =
+    terrain.error ?? overview.error ?? missingGeometryMessage ?? gridConflict;
 
   const reloadTerrain = useCallback(() => {
     terrain.reload();
@@ -162,9 +305,7 @@ export default function CeresPage() {
   // El panel crece al abrir una celda. Que ocupe menos mientras no hay nada
   // abierto devuelve al terreno los píxeles que el resumen no necesita, y hace
   // que seleccionar se note.
-  // La vista Campo no pinta ningún dato en la superficie: allí el selector de
-  // métrica y la leyenda no gobiernan nada. La malla plana siempre pinta dato.
-  const showsData = terrainMode === "2d" || surfaceStyle === "pro";
+  const layer = getAvailableLayer(activeLayerId);
 
   const inspectorWidth = cell.data
     ? "lg:w-[20rem] xl:w-[22rem] 2xl:w-[24rem]"
@@ -188,13 +329,8 @@ export default function CeresPage() {
           </div>
         )}
 
-        {!isLoadingTerrain && !terrainError && terrainCells.length > 0 && overview.data && (
-          <TerrainView
-            field={field}
-            cells={terrainCells}
-            gridWidth={overview.data.grid_width}
-            gridHeight={overview.data.grid_height}
-          />
+        {!isLoadingTerrain && !terrainError && terrainCells.length > 0 && plotGrid && (
+          <TerrainView field={field} cells={terrainCells} plot={plotGrid} />
         )}
       </div>
 
@@ -206,21 +342,14 @@ export default function CeresPage() {
         selectedCropCycleId={selectedCropCycleId}
         onSelectFarm={selectFarm}
         onSelectCropCycle={selectCropCycle}
+        moments={moments}
+        // El que se está pintando de verdad, no el que guarda el store: si el
+        // guardado no pertenece a este lote, `overviewAsOf` cae al primero, y
+        // el control tiene que marcar lo que se ve.
+        selectedAsOf={overviewAsOf}
+        plantedAt={timeline.data?.planted_at ?? null}
+        onSelectAsOf={selectAsOf}
       />
-
-      {/* Qué le preguntas al terreno. Centrado arriba porque es la decisión de
-          mayor nivel: cambia el sentido de todo lo demás que hay en pantalla.
-          Solo en relieve; la vista en planta no tiene materiales.
-
-          Centrado SOLO cuando cabe. El breadcrumb llega a 478 px, así que el
-          centro no queda libre hasta ~1116 px de ancho: por debajo de `xl` el
-          conmutador se alinea al este, en la misma fila. Centrarlo igualmente
-          lo dejaba encima del nombre del ciclo. */}
-      {terrainMode === "3d" && (
-        <div className="pointer-events-auto absolute right-6 top-4 z-40 xl:left-1/2 xl:right-auto xl:-translate-x-1/2">
-          <SurfaceStyleSwitch value={surfaceStyle} onChange={setSurfaceStyle} />
-        </div>
-      )}
 
       {/* Lote, anclado al oeste. En pantallas estrechas baja bajo la franja,
           donde no compite con el panel inferior. */}
@@ -239,34 +368,64 @@ export default function CeresPage() {
           estaba arriba a la derecha. */}
       <BottomStrips
         cells={overview.data?.cells ?? []}
+        persisted={overview.data?.persisted ?? false}
         health={health.data}
         healthError={health.error}
+        modelVersion={overview.data?.model_version ?? null}
       />
 
-      {/* La rampa continua solo en los modos que la usan: en riesgo, la clave de
-          color ya la da la franja del pie, y repetirla sería ruido. En la vista
-          Campo no hay color de dato que explicar. */}
-      {showsData && viewMode !== "risk" && (
-        <div className="absolute bottom-[8.5rem] right-6 z-20 hidden lg:block">
-          <RiskLegend cells={overview.data?.cells ?? []} viewMode={viewMode} />
+      {/* Cómo se reparte la métrica activa por el lote, dónde cae la celda
+          abierta y cuánto coincide con la zona en riesgo alto.
+
+          Para TODAS las capas, también riesgo: el reparto continuo de
+          `risk_score` no es lo mismo que el recuento de niveles de la franja del
+          pie, y es lo que dice si una celda es rara o corriente.
+
+          Al OESTE, sobre la barra de escala: es la columna del mapa —escala,
+          orientación, clave de color— y la del este la ocupa entera el
+          inspector. Al este se metía 63 px por debajo de su borde.
+
+          El TOPE DE ALTURA no es decoración: la columna oeste la comparten el
+          compás —anclado arriba— y este panel —anclado abajo—, y el panel crece
+          hacia arriba con el contenido de la capa. Sin tope, en una pantalla de
+          800 px de alto las capas con advertencia lo empujaban hasta debajo del
+          compás. Con él, lo que cede en una pantalla corta es el desplazamiento
+          del panel y no la legibilidad de otra cosa.
+
+          32rem = 6rem del compás + 8rem que mide + 1rem de aire + 17rem de
+          anclaje inferior. */}
+      {terrainCells.length > 0 && (
+        <div className="absolute bottom-[17rem] left-6 z-20 hidden max-h-[calc(100dvh-32rem)] overflow-y-auto lg:block">
+          <DistributionPanel
+            cells={terrainCells}
+            layer={layer}
+            selected={selectedTerrainCell}
+          />
         </div>
       )}
 
-      {/* Qué métrica pinta el terreno. Centrado abajo: es la decisión que más se
-          repite después de seleccionar una celda.
+      {/* Qué capa se proyecta sobre el terreno. Centrado abajo: es la decisión
+          que más se repite después de seleccionar una celda, y ahora es UNA
+          decisión —antes había que combinar este control con el de arriba—.
 
-          Por debajo de `md` sube una fila más: con tres opciones mide 242 px y
-          a 640 de ancho chocaba con el conmutador Relieve/Planta. Apilados, cada
-          uno conserva su sitio.
+          Por debajo de `md` sube una fila más: chocaba con el conmutador
+          Relieve/Planta. Apilados, cada uno conserva su sitio.
 
           Por debajo de `lg` sube para librar la hoja inferior. Degradar la
           composición en pantallas estrechas es legítimo; dejar un control bajo
-          un panel, donde no se puede pulsar, no lo es. */}
-      {showsData && (
-        <div className="absolute bottom-[calc(45dvh+5rem)] left-1/2 z-20 -translate-x-1/2 md:bottom-[calc(45dvh+1.5rem)] lg:bottom-[8.5rem]">
-          <ViewModeSwitch value={viewMode} onChange={setViewMode} />
-        </div>
-      )}
+          un panel, donde no se puede pulsar, no lo es.
+
+          De `md` en adelante se centra en la BANDA LIBRE, no en el lienzo: a la
+          izquierda la columna del mapa —escala y proyección, 15rem— y a la
+          derecha lo que ocupe esa orilla: el compás y el zoom entre `md` y `lg`
+          (5,5rem), el inspector de `lg` en adelante. Con seis capas el control mide ~420 px y
+          centrado sobre todo el ancho se metía bajo una cosa o la otra según el
+          tamaño de pantalla. Se descuenta siempre el ancho del inspector
+          abierto, aunque no haya celda seleccionada, para que el control no
+          salte al seleccionar. */}
+      <div className="absolute bottom-[calc(45dvh+5rem)] left-1/2 z-20 -translate-x-1/2 md:bottom-[calc(45dvh+1.5rem)] md:left-[calc((15rem+100%-5.5rem)/2)] lg:bottom-[8.5rem] lg:left-[calc((15rem+100%-21.5rem)/2)] xl:left-[calc((15rem+100%-23.5rem)/2)] 2xl:left-[calc((15rem+100%-25.5rem)/2)]">
+        <LayerSwitch value={activeLayerId} onChange={setActiveLayer} />
+      </div>
 
       {/* Cómo se mira el terreno. Bajo la rosa de los vientos y el zoom, que
           monta `TerrainCanvas`: los tres son controles de punto de vista. */}
@@ -296,9 +455,13 @@ export default function CeresPage() {
           cell={cell.data}
           overview={selectedOverview}
           cells={overview.data?.cells ?? []}
+          // `?? false` y no `?? true`: sin respuesta no se puede afirmar que
+          // algo esté guardado.
+          overviewPersisted={overview.data?.persisted ?? false}
           field={field}
           plot={plot}
           cropCycleId={selectedCropCycleId}
+          asOf={overviewAsOf}
           isLoading={cell.isLoading}
           error={cell.error}
           onRetry={cell.reload}

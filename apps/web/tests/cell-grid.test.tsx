@@ -12,7 +12,8 @@ import { describe, expect, it, vi } from "vitest";
 import { CellGrid } from "@/components/terrain/CellGrid";
 import { RISK_COLORS } from "@/lib/presentation/risk";
 import { zoneBorders } from "@/lib/terrain/analysis";
-import { buildOverview } from "./fixtures";
+import { getAvailableLayer } from "@/lib/terrain/layers";
+import { buildOverview, buildTerrainCells } from "./fixtures";
 
 function renderGrid(overrides: Partial<Parameters<typeof CellGrid>[0]> = {}) {
   const overview = buildOverview();
@@ -20,10 +21,10 @@ function renderGrid(overrides: Partial<Parameters<typeof CellGrid>[0]> = {}) {
 
   render(
     <CellGrid
-      cells={overview.cells}
+      cells={buildTerrainCells()}
       gridWidth={overview.grid_width}
       gridHeight={overview.grid_height}
-      viewMode="risk"
+      layer={getAvailableLayer("risk")}
       selectedCellId={null}
       onSelect={onSelect}
       {...overrides}
@@ -212,16 +213,33 @@ describe("CellGrid", () => {
     expect(label).toContain("riesgo alto");
   });
 
-  it("cambiar de modo de vista repinta la malla sin cambiar las celdas", () => {
-    const overview = buildOverview();
+  it("el valor de la capa activa no depende solo del color", () => {
+    // Verde, ámbar y rojo son justo los tonos que pierde un daltonismo
+    // rojo-verde. Con Suelo o Sanidad activas —rampas continuas, sin trama— el
+    // único camino no cromático al dato es el nombre accesible del cuadro.
+    renderGrid({ layer: getAvailableLayer("soil") });
+    const celda = screen.getAllByRole("gridcell")[0]!;
+    expect(celda.getAttribute("aria-label")).toContain("Suelo");
+  });
+
+  it("no repite el dato cuando la capa ya sale en la línea de siempre", () => {
+    // Rendimiento y pérdida ya estaban en la descripción: añadirlos otra vez
+    // haría al lector de pantalla leer dos veces lo mismo.
+    renderGrid({ layer: getAvailableLayer("yield") });
+    const etiqueta = screen.getAllByRole("gridcell")[0]!.getAttribute("aria-label") ?? "";
+    expect(etiqueta).not.toContain("Rendimiento ");
+    expect(etiqueta).toContain("kg");
+  });
+
+  it("cambiar de capa repinta la malla sin cambiar las celdas", () => {
     const props = {
-      cells: overview.cells,
+      cells: buildTerrainCells(),
       gridWidth: 20,
       gridHeight: 20,
       selectedCellId: null,
       onSelect: vi.fn(),
     };
-    const { rerender } = render(<CellGrid {...props} viewMode="risk" />);
+    const { rerender } = render(<CellGrid {...props} layer={getAvailableLayer("risk")} />);
 
     // En modo riesgo solo hay tres colores: son los tres niveles del dominio.
     const riskColors = new Set(
@@ -232,7 +250,7 @@ describe("CellGrid", () => {
     );
     expect(RISK_COLORS.high.fill).toBe("#ef4444");
 
-    rerender(<CellGrid {...props} viewMode="loss" />);
+    rerender(<CellGrid {...props} layer={getAvailableLayer("loss")} />);
 
     // Las celdas siguen siendo las mismas; lo que cambia es como se pintan.
     expect(screen.getAllByRole("gridcell")).toHaveLength(400);
@@ -274,5 +292,27 @@ describe("contorno de zona en la malla plana", () => {
         expect(celda.getAttribute("data-risk")).toBe("high");
       }
     }
+  });
+});
+
+describe("la planta no afirma tamaños físicos", () => {
+  it("el nombre de la malla dice cuántas celdas hay, no cuánto miden", () => {
+    /*
+     * Decía "celdas de 1 m²". Era la última afirmación física del frontend
+     * construida sobre la suposición de que una celda mide un metro, y la única
+     * que sobrevivió al barrido de `CELL_SIZE`: con `cell_size_m = 0,5` le
+     * habría dicho a un lector de pantalla que cada celda tiene cuatro veces su
+     * superficie real.
+     *
+     * La planta es la vista TOPOLOGICA y no recibe `cellSizeM` a propósito. La
+     * medida vive donde sí se conoce: el inspector, que la calcula desde
+     * `cell_size_m`.
+     */
+    renderGrid();
+    const malla = screen.getByRole("grid");
+    const nombre = malla.getAttribute("aria-label")!;
+
+    expect(nombre).toContain("20 por 20");
+    expect(nombre).not.toMatch(/m²|metro/i);
   });
 });

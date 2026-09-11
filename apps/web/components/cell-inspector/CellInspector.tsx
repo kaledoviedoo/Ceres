@@ -30,8 +30,9 @@
  * creer que hay un DEM detrás.
  */
 
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 
+import { MetricRow } from "@/components/cell-inspector/MetricRow";
 import { PredictionPanel } from "@/components/cell-inspector/PredictionPanel";
 import { LineChart, MetricBar, ScoreDial, Stat, type SeriesPoint } from "@/components/ui/DataViz";
 import { RiskBadge } from "@/components/ui/Badge";
@@ -44,23 +45,34 @@ import {
   formatDensity,
   formatIndex,
   formatInteger,
+  formatDate,
   formatKg,
   formatPercent,
   formatScore,
+  persistenceLabel,
 } from "@/lib/presentation/format";
 import { RISK_COLORS, riskDistribution } from "@/lib/presentation/risk";
-import { percentile } from "@/lib/terrain/analysis";
-import type { ElevationField } from "@/lib/terrain/elevation";
+import { percentileLabel, percentileOf } from "@/lib/terrain/statistics";
+import { PROVENANCE_LABEL, type ElevationField } from "@/lib/terrain/elevation";
 import type { CellDetail, CellOverview, Plot, RiskLevel } from "@/lib/types/api";
 
 interface CellInspectorProps {
   cell: CellDetail | null;
   overview: CellOverview | null;
   cells: CellOverview[];
+  /**
+   * Si las métricas de `overview` están guardadas.
+   *
+   * Lo declara la API y hoy es siempre `false`: son cálculos al vuelo. Se pasa
+   * en vez de escribirlo a mano para que el día que cambie, cambie el rótulo.
+   */
+  overviewPersisted: boolean;
   /** Solo para leer la procedencia. El inspector no construye geometría. */
   field: ElevationField | null;
   plot: Plot | null;
   cropCycleId: string | null;
+  /** El instante que se está pintando; viaja al guardar una predicción. */
+  asOf: string | null;
   isLoading: boolean;
   error: string | null;
   onRetry?: () => void;
@@ -80,9 +92,11 @@ export function CellInspector({
   cell,
   overview,
   cells,
+  overviewPersisted,
   field,
   plot,
   cropCycleId,
+  asOf,
   isLoading,
   error,
   onRetry,
@@ -95,12 +109,47 @@ export function CellInspector({
     [cell?.id],
   );
 
+  /**
+   * PREDICCIÓN CONTRA COSECHA REAL, para el momento que se está viendo.
+   *
+   * Es la mitad del ciclo que el inspector no enseñaba. El mapa ya seguía al
+   * momento seleccionado; esta ficha mostraba el historial de predicciones sin
+   * cosecha y sin error, así que la comparación contra la verdad no llegaba a
+   * la pantalla.
+   *
+   * `asOf` viaja en la petición y no se resuelve aquí: así el momento que se
+   * muestra es observable desde fuera, y un test puede detectar que la ficha
+   * está enseñando uno distinto del que dice.
+   *
+   * Las dependencias son las tres de las que depende la respuesta, ni una más:
+   * cambiar de celda o de momento pide de nuevo, repetir el mismo par no.
+   */
+  const performance = useApiResource(
+    // SIN MOMENTO NO SE PIDE NADA. Un lote sin predicciones no tiene eje
+    // temporal --la finca demo-- y preguntarle a la API por el rendimiento de
+    // un instante que no existe es una petición que nadie va a leer: el bloque
+    // de abajo está condicionado al mismo `asOf`.
+    cell && cropCycleId && asOf
+      ? (signal) => ceresApi.getCellPerformance(cell.id, cropCycleId, asOf, signal)
+      : null,
+    [cell?.id, cropCycleId, asOf],
+  );
+
+  /**
+   * La entrada del momento pedido, si existe.
+   *
+   * Con `asOf` la API devuelve exactamente una o ninguna. Ninguna significa que
+   * CERES nunca hablo de ese instante para esta celda, y es una respuesta: la
+   * ficha lo dice en vez de enseñar la entrada más cercana.
+   */
+  const rendimiento = performance.data?.entries[0] ?? null;
+
   const yields = useMemo(() => cells.map((c) => c.projected_yield_kg), [cells]);
   /** Fracción del lote que rinde MENOS que esta celda. Un solo cálculo para
    *  la barra y para la frase que la explica: si divergieran, el texto
    *  contaría algo distinto de lo que se ve. */
   const rendimientoPct = overview
-    ? percentile(yields, overview.projected_yield_kg)
+    ? percentileOf(yields, overview.projected_yield_kg)
     : 0;
 
   const row = useMemo(() => {
@@ -121,10 +170,26 @@ export function CellInspector({
   }));
   const activeIndex = row.findIndex((c) => c.x === cell.x);
 
-  const predicciones: SeriesPoint[] = (history.data?.predictions ?? []).map((p) => ({
-    label: p.created_at,
-    value: p.projected_yield_kg,
-  }));
+  /**
+   * La serie histórica, ordenada y etiquetada por `as_of`.
+   *
+   * Estaba etiquetada por `created_at`, que es cuándo se EJECUTÓ el cálculo. Con
+   * el dataset sintético las dos predicciones de una celda se generaron en el
+   * mismo segundo, así que el gráfico mostraba dos puntos simultáneos en vez de
+   * una evolución de abril a agosto: exactamente la confusión que `as_of` vino a
+   * resolver, reaparecida en el eje X.
+   *
+   * Las que no tienen `as_of` se quedan fuera: son el estado base, sin fechar, y
+   * no se pueden situar en una serie temporal.
+   */
+  const predicciones: SeriesPoint[] = (history.data?.predictions ?? [])
+    .filter((p) => p.as_of !== null)
+    .slice()
+    .sort((a, b) => (a.as_of! < b.as_of! ? -1 : 1))
+    .map((p) => ({
+      label: formatDate(p.as_of!),
+      value: p.projected_yield_kg,
+    }));
 
   return (
     // `key` por celda: reinicia la animación de entrada, que es lo que avisa de
@@ -158,7 +223,15 @@ export function CellInspector({
           <Stat label="Latitud" value={formatLatitude(cell.centroid_latitude)} />
           <Stat label="Longitud" value={formatLongitude(cell.centroid_longitude)} />
           <Stat label="Elevación" value={`${cell.elevation_m.toFixed(2)} m`} hint="sobre el nivel del mar" />
-          <Stat label="Pendiente" value={formatDegrees(cell.slope_deg)} />
+          {/* El `hint` no es adorno: la pendiente está junto a unas coordenadas
+              con seis decimales y una altitud con dos, y en esa compañía se lee
+              como una medición. Se deriva de la elevación de al lado, que la
+              nota de abajo declara sintética. */}
+          <Stat
+            label="Pendiente"
+            value={formatDegrees(cell.slope_deg)}
+            hint="derivada de la elevación"
+          />
         </div>
 
         {field && <ProvenanceNote field={field} />}
@@ -166,7 +239,7 @@ export function CellInspector({
 
       {/* ── 3 · Cuánto da ───────────────────────────────────────────────── */}
       {overview && (
-        <Block title="Rendimiento estimado" note="Sin guardar">
+        <Block title="Rendimiento estimado" note={persistenceLabel(overviewPersisted)}>
           <p className="display">{formatKg(overview.projected_yield_kg)}</p>
           <p className="tabular mt-1.5 text-[11px] text-muted">
             {formatInteger(overview.projected_boxes)} cajas proyectadas
@@ -187,11 +260,13 @@ export function CellInspector({
       )}
 
       {/* ── 4 · Cómo está el terreno ────────────────────────────────────── */}
-      <Block title="Condición del terreno" note="Medido">
-        {/* Aquí las barras van SIN percentil a propósito: son condiciones de
-            entrada, no resultados, y ordenarlas entre celdas invitaría a leer
-            "mejor suelo que el 70 % del lote" como si fuera una conclusión del
-            motor. El percentil vive donde sí es una conclusión: el rendimiento. */}
+      {/* "Entrada del modelo" y no "Medido", que es lo que decía antes y era
+          falso: ninguno de estos cuatro valores se levantó en campo. Llegan en
+          la ficha de la celda y alimentan el motor —sanidad y suelo son dos de
+          los tres términos del score de riesgo—. Lo que sí es cierto de todos
+          ellos, venga el dataset de donde venga, es que son ENTRADAS: nada aquí
+          es un resultado, y por eso ninguna barra lleva percentil. */}
+      <Block title="Condición del terreno" note="Entrada del modelo">
         <MetricBar
           label="Calidad de suelo"
           value={formatIndex(cell.soil_quality)}
@@ -244,14 +319,91 @@ export function CellInspector({
               tone={tone}
             />
             <p className="mt-1 text-[11px] leading-relaxed text-muted">
-              Rinde más que el {Math.round(rendimientoPct * 100)} % de las{" "}
+              Rinde más que el {percentileLabel(rendimientoPct)} % de las{" "}
               {yields.length} celdas del lote.
             </p>
           </div>
         </Block>
       )}
 
-      {/* ── 6 · Qué ha pasado antes ─────────────────────────────────────── */}
+      {/* ── 6 · Qué predijo CERES en ESTE momento, y qué se cosechó ──────── */}
+      {asOf && (
+        <Block
+          title="Predicción vs cosecha"
+          note={rendimiento?.as_of ? formatDate(rendimiento.as_of) : formatDate(asOf)}
+        >
+          {performance.error && (
+            <p className="text-xs text-muted">{performance.error}</p>
+          )}
+
+          {!performance.error && !rendimiento && !performance.isLoading && (
+            // Que no haya entrada NO es un error: significa que CERES nunca
+            // habló de este instante para esta celda. Enseñar la más cercana
+            // sería mostrar un momento por otro.
+            <p className="text-xs text-muted">
+              No hay ninguna predicción guardada de este momento para esta celda.
+            </p>
+          )}
+
+          {rendimiento && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <Stat
+                  label="CERES predijo"
+                  value={formatKg(rendimiento.projected_yield_kg)}
+                />
+                <Stat
+                  label="Se cosechó"
+                  // La cosecha real NO depende del momento: es la misma celda y
+                  // el mismo ciclo. Lo que cambia es la predicción con la que se
+                  // compara, y por tanto el error.
+                  value={
+                    rendimiento.actual_yield_kg === null
+                      ? "—"
+                      : formatKg(rendimiento.actual_yield_kg)
+                  }
+                />
+              </div>
+
+              <div className="mt-3">
+                {rendimiento.absolute_error_kg === null ? (
+                  // Los dos casos sin error medible: sin cosecha registrada, o
+                  // predicción POSTERIOR a ella. Un cero sería una afirmación
+                  // sobre la precisión del modelo.
+                  <p className="text-xs text-muted">
+                    Sin error medible: {rendimiento.harvest_id
+                      ? "esta predicción es posterior a la cosecha, así que no predijo nada."
+                      : "esta celda todavía no tiene cosecha registrada."}
+                  </p>
+                ) : (
+                  <div>
+                    <MetricRow
+                      label="Error absoluto"
+                      value={formatKg(rendimiento.absolute_error_kg)}
+                    />
+                    <MetricRow
+                      label="Error relativo"
+                      value={
+                        rendimiento.percentage_error === null
+                          ? "—"
+                          : formatPercent(rendimiento.percentage_error)
+                      }
+                      hint={
+                        rendimiento.percentage_error === null
+                          ? "La cosecha fue 0 kg: no se puede dividir."
+                          : undefined
+                      }
+                    />
+                    <MetricRow label="Modelo" value={rendimiento.model_version} />
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </Block>
+      )}
+
+      {/* ── 7 · Qué ha pasado antes ─────────────────────────────────────── */}
       <Block title="Histórico" note={`${predicciones.length} registros`}>
         <LineChart
           points={predicciones}
@@ -263,7 +415,22 @@ export function CellInspector({
         />
 
         <div className="mt-4">
-          <PredictionPanel cellId={cell.id} cropCycleId={cropCycleId} />
+          <PredictionPanel
+            cellId={cell.id}
+            cropCycleId={cropCycleId}
+            asOf={asOf}
+            // Guardar cambia dos cosas de esta ficha: la serie del histórico y
+            // la entrada del momento que se está viendo. Se recargan con la
+            // celda, el ciclo y el momento ACTUALES —`reload` no lleva
+            // argumentos a propósito—: si el usuario ya cambió de momento
+            // cuando el POST responde, lo que se refresca es lo que ve, no lo
+            // que guardó. Sin momento no hay bloque de rendimiento y ese
+            // `reload` no pide nada.
+            onSaved={() => {
+              history.reload();
+              performance.reload();
+            }}
+          />
         </div>
       </Block>
     </div>
@@ -280,7 +447,6 @@ export function CellInspector({
  */
 function ProvenanceNote({ field }: { field: ElevationField }) {
   const p = field.provenance;
-  const etiqueta = { synthetic: "Sintética", dem: "DEM", lidar: "LiDAR" }[p.kind];
 
   return (
     <p className="mt-3 flex items-start gap-2 border-t border-line-soft pt-3 text-[10px] leading-relaxed text-muted">
@@ -291,13 +457,18 @@ function ProvenanceNote({ field }: { field: ElevationField }) {
         }`}
       />
       <span>
-        <span className="text-ink-soft">Elevación {etiqueta.toLowerCase()}</span>
+        <span className="text-ink-soft">Elevación {PROVENANCE_LABEL[p.kind]}</span>
         {" · "}
-        {p.measured ? "medición" : "dato generado, no medido"}
+        {p.measured ? "medición" : "dato no medido"}
         {" · resolución "}
         {p.nominalResolutionM} m nominal
-        {p.effectiveResolutionM !== p.nominalResolutionM &&
-          ` (${p.effectiveResolutionM} m efectiva)`}
+        {/* La efectiva solo aparece si alguien la ha medido. Cuando la API no la
+            declara llega `null`, y escribir ahí un número —o repetir la nominal—
+            afirmaría una precisión que nadie ha comprobado. */}
+        {p.effectiveResolutionM === null
+          ? " · resolución efectiva sin medir"
+          : p.effectiveResolutionM !== p.nominalResolutionM &&
+            ` (${p.effectiveResolutionM} m efectiva)`}
       </span>
     </p>
   );
@@ -312,10 +483,19 @@ function Block({
   note?: string;
   children: React.ReactNode;
 }) {
+  // `aria-labelledby` y no un `<section>` pelado: una sección sin nombre
+  // accesible no expone `role="region"`, así que un lector de pantalla no puede
+  // saltar entre los bloques de la ficha ni anunciarlos. Con la cabecera como
+  // nombre, cada bloque es un destino de navegación —y, de paso, algo que un
+  // test puede localizar sin depender de dónde caiga un número en la pantalla.
+  const headingId = useId();
+
   return (
-    <section>
+    <section aria-labelledby={headingId}>
       <div className="mb-3 flex items-baseline justify-between gap-3 border-b border-line pb-1.5">
-        <h3 className="group-title">{title}</h3>
+        <h3 id={headingId} className="group-title">
+          {title}
+        </h3>
         {note && <span className="eyebrow shrink-0">{note}</span>}
       </div>
       {children}
@@ -324,6 +504,11 @@ function Block({
 }
 
 const LEVELS: RiskLevel[] = ["low", "medium", "high"];
+
+/** Cuántos metros ocupan `celdas` en este lote. Sale del dato, no de suponer 1 m. */
+function ladoEnMetros(celdas: number, plot: Plot): string {
+  return (celdas * plot.cell_size_m).toLocaleString("es", { maximumFractionDigits: 1 });
+}
 
 /**
  * Lo que se ve cuando no hay ninguna celda abierta.
@@ -366,8 +551,13 @@ function PlotSummary({
             <Stat label="Mínima" value={`${field.source.minMeters.toFixed(2)} m`} />
             <Stat label="Máxima" value={`${field.source.maxMeters.toFixed(2)} m`} />
           </div>
+          {/* Los metros del lote salen de multiplicar celdas por `cell_size_m`,
+              no de suponer que una celda mide un metro. Antes esta frase decía
+              "en 20 × 20 m" leyendo el RECUENTO de celdas: con celdas de medio
+              metro habría afirmado el doble del lote real. */}
           <p className="tabular mt-2 text-[11px] text-muted">
-            Desnivel {field.reliefM.toFixed(2)} m en {plot.grid_width} × {plot.grid_height} m
+            Desnivel {field.reliefM.toFixed(2)} m en {ladoEnMetros(plot.grid_width, plot)} ×{" "}
+            {ladoEnMetros(plot.grid_height, plot)} m
           </p>
           <ProvenanceNote field={field} />
         </Block>

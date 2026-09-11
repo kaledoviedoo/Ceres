@@ -22,7 +22,7 @@
  * es modelar.
  */
 
-import { formatInteger, formatKg } from "@/lib/presentation/format";
+import { formatInteger, formatKg, persistenceLabel } from "@/lib/presentation/format";
 import { RISK_COLORS, RISK_PATTERNS, riskDistribution } from "@/lib/presentation/risk";
 import type { CellOverview, HealthStatus, RiskLevel } from "@/lib/types/api";
 
@@ -35,9 +35,29 @@ interface BottomStripsProps {
   cells: CellOverview[];
   health: HealthStatus | null;
   healthError: string | null;
+  /** Si lo que se está resumiendo está guardado. Lo dice la API, no esta franja. */
+  persisted: boolean;
+  /**
+   * Qué modelos produjeron los números que hay en pantalla.
+   *
+   * Sale del overview y no de `/health`. La diferencia importa desde que el
+   * mapa tiene fecha: con `as_of` intervienen DOS modelos —el motor de
+   * rendimiento y `impact-v0`, que deriva el estado de cada celda— y `/health`
+   * solo conoce el primero, porque describe el despliegue y no esta respuesta.
+   *
+   * `null` mientras no hay overview; entonces se cae a la del despliegue, que
+   * es lo único que se puede afirmar sin números que atribuir.
+   */
+  modelVersion: string | null;
 }
 
-export function BottomStrips({ cells, health, healthError }: BottomStripsProps) {
+export function BottomStrips({
+  cells,
+  health,
+  healthError,
+  persisted,
+  modelVersion,
+}: BottomStripsProps) {
   if (cells.length === 0) return null;
 
   const counts = riskDistribution(cells);
@@ -94,7 +114,7 @@ export function BottomStrips({ cells, health, healthError }: BottomStripsProps) 
         </dl>
       </Strip>
 
-      <Strip title="Rendimiento proyectado" note="Sin guardar">
+      <Strip title="Rendimiento proyectado" note={persistenceLabel(persisted)}>
         <dl className="flex gap-6">
           <Figure label="Mínimo" value={formatKg(min)} />
           <Figure label="Máximo" value={formatKg(max)} />
@@ -102,7 +122,7 @@ export function BottomStrips({ cells, health, healthError }: BottomStripsProps) 
         </dl>
       </Strip>
 
-      <Strip title="Modelo" note={health?.model_version ?? "—"}>
+      <Strip title="Modelo" note={modelVersion ?? health?.model_version ?? "—"}>
         <dl className="flex gap-6">
           <div className="min-w-0">
             <dt className="eyebrow flex items-center gap-1.5">

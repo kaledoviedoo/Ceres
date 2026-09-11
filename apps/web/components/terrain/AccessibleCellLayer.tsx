@@ -22,12 +22,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatKg, formatPercent, formatScore } from "@/lib/presentation/format";
 import { RISK_COLORS } from "@/lib/presentation/risk";
+import { layerReading, type AvailableLayer } from "@/lib/terrain/layers";
 import type { TerrainCell } from "@/lib/terrain/types";
 
 interface AccessibleCellLayerProps {
   cells: TerrainCell[];
   gridWidth: number;
   gridHeight: number;
+  /**
+   * La capa activa. Hace falta AQUI, y no solo para pintar: lo que la capa
+   * proyecta sobre el terreno es color, y el color no llega a esta capa. Sin el
+   * valor escrito, con Suelo o Sanidad activas la malla accesible enumeraba
+   * rendimiento, pérdida y riesgo —y callaba justo lo que se está mirando—.
+   */
+  layer: AvailableLayer;
   selectedCellId: string | null;
   onSelect: (cellId: string) => void;
   /** Se llama al mover el foco, para resaltar la celda en la escena. */
@@ -38,6 +46,7 @@ export function AccessibleCellLayer({
   cells,
   gridWidth,
   gridHeight,
+  layer,
   selectedCellId,
   onSelect,
   onFocusCell,
@@ -120,9 +129,12 @@ export function AccessibleCellLayer({
       {rows.map((row, rowIndex) => (
         <div key={rowIndex} role="row" aria-rowindex={rowIndex + 1} className="sr-only">
           {row.map((cell) => {
+            const lectura = layerReading(layer, cell);
             const description = [
               cell.cell_code,
               `columna ${cell.x + 1}, fila ${cell.y + 1}`,
+              // La capa activa va primero: es lo que se está mirando.
+              ...(lectura ? [lectura] : []),
               formatKg(cell.projected_yield_kg),
               `pérdida ${formatPercent(cell.estimated_loss_percentage)}`,
               `riesgo ${RISK_COLORS[cell.risk_level].label.toLowerCase()}, ${formatScore(cell.risk_score)}`,

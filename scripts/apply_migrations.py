@@ -64,7 +64,11 @@ def main() -> int:
                 print(f"   [pending] {version}")
                 continue
             print(f"   [apply]   {version}")
-            connection.exec_driver_sql(path.read_text(encoding="utf-8"))
+            # Cursor DBAPI sin parametros: el fichero se envia TAL CUAL. Con
+            # `exec_driver_sql`, psycopg interpreta cada `%` del SQL como un
+            # marcador de parametro y 0002 --que tiene `%` en un mensaje de
+            # RAISE-- no se podia aplicar desde este script.
+            connection.connection.cursor().execute(path.read_text(encoding="utf-8"))
 
     return 0
 

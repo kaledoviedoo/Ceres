@@ -1,23 +1,40 @@
 """Prediccion vs realidad: el cierre del ciclo del Digital Twin.
 
 Empareja cada prediccion de una celda con la cosecha real de esa celda en el
-mismo ciclo de cultivo. Si hay varias cosechas para el mismo par, se toma la mas
-reciente; el MVP asume una cosecha por celda y ciclo.
+mismo ciclo de cultivo, SIEMPRE QUE la prediccion hable de un momento anterior a
+la cosecha. Si hay varias cosechas para el mismo par, se toma la mas reciente;
+el MVP asume una cosecha por celda y ciclo.
 
-La aritmetica del error vive en `app/domain/performance.py`, no aqui.
+Ni la aritmetica del error ni la regla de emparejamiento viven aqui: las dos
+estan en `app/domain/performance.py`, que es la fuente de verdad conceptual y
+tiene su espejo en la vista SQL.
+
+QUE CAMBIO Y POR QUE
+--------------------
+Antes se emparejaba TODA prediccion del ciclo con la cosecha, sin mirar fechas.
+Con el eje temporal eso dejo de ser correcto: una prediccion cuyo `as_of` es
+posterior a la cosecha no predijo nada —describia un lote ya recogido— y su
+diferencia con el rendimiento real no es un error de prediccion. Ademas la lista
+se ordenaba por `created_at`, que es cuando se ejecuto el calculo, no el momento
+del que habla.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain.performance import absolute_error_kg, percentage_error
-from app.models import Harvest, Prediction
+from app.domain.performance import (
+    absolute_error_kg,
+    percentage_error,
+    prediction_precedes_harvest,
+)
+from app.models import CropCycle, Harvest, Prediction
 from app.schemas.performance import CellPerformance, PerformanceEntry
-from app.services.errors import NotFoundError
+from app.services.errors import ConflictError, NotFoundError
 from app.services.farms import get_cell
 
 
@@ -25,18 +42,60 @@ def get_cell_performance(
     session: Session,
     cell_id: uuid.UUID,
     crop_cycle_id: uuid.UUID | None = None,
+    as_of: datetime | None = None,
 ) -> CellPerformance:
-    """Historial de la celda con el error de cada prediccion, mas reciente primero."""
+    """Historial de la celda con el error de cada prediccion, mas reciente primero.
+
+    `as_of` FILTRA el historial al momento pedido; no recalcula nada. Lo que
+    devuelve este servicio es lo que CERES dijo en su dia, y eso vive en
+    `predictions`: rederivarlo dejaria que la respuesta cambiara al cambiar el
+    modelo, y entonces no seria un historial.
+
+    Que el filtro sea sobre `as_of` y no sobre `created_at` es la misma
+    distincion de siempre: se pide el momento del que HABLA la prediccion, no
+    cuando se ejecuto el calculo.
+
+    LA COSECHA NO SE FILTRA. Es la misma celda y el mismo ciclo, asi que el
+    rendimiento real no depende del momento desde el que se mire; lo que cambia
+    es la prediccion con la que se compara. Por eso el filtro se aplica solo a
+    la consulta de predicciones.
+
+    EL CICLO SE VERIFICA, no solo se filtra por el. Un ciclo que no existe es un
+    404 y uno de otro lote un 409, igual que al escribir: si leer no protesta y
+    escribir si, un cliente puede creer que el par es valido porque la lectura
+    devolvio una lista vacia. Antes las tres preguntas —ciclo ajeno, ciclo
+    inexistente, ciclo legitimo sin predicciones— recibian la misma respuesta.
+    """
     cell = get_cell(session, cell_id)
+
+    if crop_cycle_id is not None:
+        cycle = session.get(CropCycle, crop_cycle_id)
+        if cycle is None:
+            raise NotFoundError("CropCycle", crop_cycle_id)
+        if cycle.plot_id != cell.plot_id:
+            raise ConflictError(
+                f"La celda {cell.cell_code} no pertenece al lote del ciclo {cycle.slug}"
+            )
 
     prediction_query = select(Prediction).where(Prediction.cell_id == cell_id)
     harvest_query = select(Harvest).where(Harvest.cell_id == cell_id)
     if crop_cycle_id is not None:
         prediction_query = prediction_query.where(Prediction.crop_cycle_id == crop_cycle_id)
         harvest_query = harvest_query.where(Harvest.crop_cycle_id == crop_cycle_id)
+    if as_of is not None:
+        prediction_query = prediction_query.where(Prediction.as_of == as_of)
 
+    # Ordenadas por el momento del que HABLAN, no por cuando se ejecutaron: es
+    # lo que hace que la lista se lea como una serie y no como un registro de
+    # actividad. `created_at` desempata las que no tengan `as_of`.
     predictions = list(
-        session.scalars(prediction_query.order_by(Prediction.created_at.desc(), Prediction.id))
+        session.scalars(
+            prediction_query.order_by(
+                Prediction.as_of.desc(),
+                Prediction.created_at.desc(),
+                Prediction.id,
+            )
+        )
     )
     harvests = list(
         session.scalars(harvest_query.order_by(Harvest.harvested_at.desc(), Harvest.id))
@@ -64,10 +123,18 @@ def get_cell_performance(
 
 
 def _build_entry(prediction: Prediction, harvest: Harvest | None) -> PerformanceEntry:
-    if harvest is None:
+    # LA REGLA, en una linea: solo hay error medible si la prediccion precede a
+    # la cosecha. Una posterior queda en la lista —es parte del historial— pero
+    # sin cosecha ni error.
+    comparable = harvest is not None and prediction_precedes_harvest(
+        prediction.as_of, harvest.harvested_at
+    )
+
+    if harvest is None or not comparable:
         return PerformanceEntry(
             prediction_id=prediction.id,
             predicted_at=prediction.created_at,
+            as_of=prediction.as_of,
             model_version=prediction.model_version,
             projected_yield_kg=prediction.projected_yield_kg,
             projected_boxes=prediction.projected_boxes,
@@ -78,6 +145,7 @@ def _build_entry(prediction: Prediction, harvest: Harvest | None) -> Performance
     return PerformanceEntry(
         prediction_id=prediction.id,
         predicted_at=prediction.created_at,
+        as_of=prediction.as_of,
         model_version=prediction.model_version,
         projected_yield_kg=prediction.projected_yield_kg,
         projected_boxes=prediction.projected_boxes,

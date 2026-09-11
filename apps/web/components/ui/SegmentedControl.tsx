@@ -90,6 +90,9 @@ export function SegmentedControl<T extends string>({
     return () => observer.disconnect();
   }, [measure, options.length]);
 
+  // `px-3` y no `px-4`: con seis capas el selector medía 468 px y no cabía entre
+  // la columna oeste del mapa y el inspector. Doce píxeles por lado siguen
+  // dejando un objetivo de pulsación holgado con la altura de 32 px.
   const alto = size === "md" ? "h-9" : "h-8";
   const texto = size === "md" ? "text-[13px]" : "text-[11px]";
 
@@ -125,7 +128,7 @@ export function SegmentedControl<T extends string>({
             title={option.hint}
             aria-pressed={active}
             onClick={() => onChange(option.id)}
-            className={`relative z-10 inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-4 font-medium transition-colors ${texto} ${
+            className={`relative z-10 inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-3 font-medium transition-colors ${texto} ${
               active ? "text-canvas" : "text-muted hover:text-ink"
             }`}
           >

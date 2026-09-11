@@ -22,42 +22,51 @@
 
 import { create } from "zustand";
 
-import type { ViewMode } from "@/lib/presentation/risk";
+import { DEFAULT_LAYER_ID, type LayerId } from "@/lib/terrain/layers";
 
-/** Cómo se representa el terreno. El 3D es la vista principal. */
+/** Cómo se PROYECTA el terreno. Relieve (3D) o planta (2D). */
 export type TerrainMode = "3d" | "2d";
-
-/**
- * Como se pinta la superficie del terreno.
- *
- *   lindo  cesped uniforme con surcos. El color NO codifica nada: sirve para
- *          entender la forma del campo y para enseñarselo a quien no es agronomo.
- *   pro    una celda, un color plano, borde duro. Sirve para trabajar.
- *
- * Son dos preguntas distintas —"como es el campo" y "que dice el motor"— y por
- * eso son un conmutador y no dos entradas de la misma lista.
- */
-export type SurfaceStyle = "lindo" | "pro";
 
 interface CeresUiState {
   selectedFarmId: string | null;
   selectedPlotId: string | null;
   selectedCropCycleId: string | null;
-  /** Celda abierta en el panel lateral. */
+  /**
+   * Celda abierta en el panel lateral.
+   *
+   * Vive FUERA de la capa activa y del modo de proyección a propósito: la celda
+   * A-00133 es la misma celda se mire con la capa que se mire. Cambiar de capa
+   * cambia lo que se ve encima del terreno, nunca qué celda se está leyendo.
+   */
   selectedCellId: string | null;
-  /** Qué métrica colorea el terreno. */
-  viewMode: ViewMode;
-  /** Representación del terreno: relieve 3D o malla plana. */
+  /**
+   * DE QUÉ MOMENTO se está mirando el lote, en ISO-8601.
+   *
+   * Es lo único que hace falta guardar del eje temporal: baja como `as_of` a
+   * `GET /plots/{id}/overview` y todo lo que depende del tiempo —mapa, riesgo
+   * por celda, resumen del pie, panel de reparto, inspector— cuelga de esa
+   * respuesta. No hay una segunda copia del estado temporal en ninguna parte.
+   *
+   * `null` significa estado BASE, sin observaciones. Es lo que se sirve cuando
+   * el lote no tiene ningún momento del que hablar.
+   *
+   * Guarda el VALOR y no un índice: los instantes son distintos en cada lote
+   * —t0 de papa es el 14 de abril y el de maíz el 10 de mayo—, así que un
+   * índice heredado apuntaría a otra fecha sin avisar.
+   */
+  selectedAsOf: string | null;
+  /** Qué capa analítica se proyecta sobre el terreno. */
+  activeLayerId: LayerId;
+  /** Proyección del terreno: relieve 3D o malla plana. */
   terrainMode: TerrainMode;
-  surfaceStyle: SurfaceStyle;
 
   selectFarm: (farmId: string | null) => void;
   selectPlot: (plotId: string | null) => void;
   selectCropCycle: (cropCycleId: string | null) => void;
   selectCell: (cellId: string | null) => void;
-  setViewMode: (mode: ViewMode) => void;
+  selectAsOf: (asOf: string | null) => void;
+  setActiveLayer: (id: LayerId) => void;
   setTerrainMode: (mode: TerrainMode) => void;
-  setSurfaceStyle: (style: SurfaceStyle) => void;
   clearSelection: () => void;
 }
 
@@ -66,19 +75,25 @@ export const useCeresStore = create<CeresUiState>((set) => ({
   selectedPlotId: null,
   selectedCropCycleId: null,
   selectedCellId: null,
-  viewMode: "risk",
+  selectedAsOf: null,
+  activeLayerId: DEFAULT_LAYER_ID,
   terrainMode: "3d",
-  // Se entra por la vista de trabajo: CERES es una herramienta de analisis.
-  surfaceStyle: "pro",
 
   // Cambiar de finca invalida todo lo que colgaba de ella. Si no se limpiara,
   // el panel seguiría mostrando una celda de la finca anterior.
+  //
+  // `selectedAsOf` se limpia con lo demás, y no por simetría: los instantes son
+  // propios de cada ciclo. Arrastrar el 13 de agosto de la papa al maíz —cuyo
+  // t2 es el 8 de septiembre— pediría un mapa de una fecha que ese lote no
+  // tiene, y saldría un estado real pero que no corresponde a ningún momento
+  // del escenario. La página vuelve a elegir el momento del lote nuevo.
   selectFarm: (farmId) =>
     set({
       selectedFarmId: farmId,
       selectedPlotId: null,
       selectedCropCycleId: null,
       selectedCellId: null,
+      selectedAsOf: null,
     }),
 
   selectPlot: (plotId) =>
@@ -86,17 +101,26 @@ export const useCeresStore = create<CeresUiState>((set) => ({
       selectedPlotId: plotId,
       selectedCropCycleId: null,
       selectedCellId: null,
+      selectedAsOf: null,
     }),
 
-  selectCropCycle: (cropCycleId) => set({ selectedCropCycleId: cropCycleId }),
+  // El ciclo también: dos ciclos del mismo lote son dos temporadas distintas y
+  // no comparten instantes.
+  selectCropCycle: (cropCycleId) =>
+    set({ selectedCropCycleId: cropCycleId, selectedAsOf: null }),
 
   selectCell: (cellId) => set({ selectedCellId: cellId }),
 
-  setViewMode: (viewMode) => set({ viewMode }),
+  // Mover el tiempo NO cierra la celda abierta: es la misma celda vista en otro
+  // momento, y cerrarla obligaría a volver a buscarla para comparar, que es
+  // justo lo que el control existe para permitir.
+  selectAsOf: (asOf) => set({ selectedAsOf: asOf }),
+
+  // Cambiar de capa NO toca `selectedCellId`. Es la garantía de que la celda
+  // abierta sobrevive a cualquier cambio de representación.
+  setActiveLayer: (activeLayerId) => set({ activeLayerId }),
 
   setTerrainMode: (terrainMode) => set({ terrainMode }),
-
-  setSurfaceStyle: (surfaceStyle) => set({ surfaceStyle }),
 
   clearSelection: () => set({ selectedCellId: null }),
 }));

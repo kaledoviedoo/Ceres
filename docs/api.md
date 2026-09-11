@@ -26,6 +26,9 @@ un schema Pydantic.
 | GET | `/farms/{farm_id}` | `FarmDetail` | ✅ |
 | GET | `/plots/{plot_id}` | `PlotRead` | ✅ |
 | GET | `/plots/{plot_id}/cells` | `CellCollection` | ✅ |
+| GET | `/plots/{plot_id}/crop-cycles` | `list[CropCycleDetail]` | ✅ |
+| GET | `/plots/{plot_id}/timeline` | `PlotTimeline` | ✅ |
+| GET | `/plots/{plot_id}/overview` | `PlotOverview` | ✅ |
 | GET | `/cells/{cell_id}` | `CellRead` | ✅ |
 | POST | `/predictions` | `PredictionRead` (201) | ✅ |
 | GET | `/cells/{cell_id}/predictions` | `PredictionList` | ✅ |
@@ -36,7 +39,21 @@ un schema Pydantic.
 | GET | `/cells/{cell_id}/performance` | `CellPerformance` | ✅ |
 
 `/cells/{id}/predictions` y `/cells/{id}/performance` aceptan `?crop_cycle_id=`
-para filtrar por temporada.
+para filtrar por temporada. El ciclo se verifica, no solo se filtra: 404 si no
+existe, 409 si es de otro lote, los mismos codigos que al escribir.
+
+`/plots/{id}/overview` y `/cells/{id}/performance` aceptan ademas `?as_of=`, y
+**no significa lo mismo en los dos**:
+
+| endpoint | con `as_of` |
+|---|---|
+| `/plots/{id}/overview` | **RECALCULA** el estado de ese instante con `state_at` |
+| `/cells/{id}/performance` | **FILTRA** el historial a la prediccion de ese instante |
+
+La diferencia es deliberada. El mapa pinta un estado, que se deriva cuando haga
+falta; el historial cuenta lo que CERES dijo aquel dia, y eso es un hecho que
+vive en `predictions`. Rederivarlo dejaria que el pasado cambiara al cambiar el
+modelo.
 
 ## Como se atraviesan las capas
 
@@ -126,14 +143,19 @@ operacion. La base de datos lo refuerza con un trigger (migracion 0002).
 
 ## Carga de la malla
 
-`GET /plots/{plot_id}/cells` devuelve las **400 celdas de una vez**, con
-`grid_width`, `grid_height` y `cell_size_m`. Ordenadas por `(y, x)`: filas de sur
-a norte, de oeste a este.
+`GET /plots/{plot_id}/cells` devuelve **la malla entera de una vez**, con
+`grid_width`, `grid_height`, `cell_size_m` y el bloque `provenance`. Ordenadas
+por `(y, x)`: filas de sur a norte, de oeste a este.
 
 No es una optimizacion prematura sino lo contrario — una peticion por celda
-serian 400 round-trips para pintar una pantalla, y ese patron es imposible de
-deshacer una vez que el frontend depende de el. `CellSummary` es deliberadamente
-compacto porque se multiplica por 400.
+serian tantos round-trips como celdas para pintar una pantalla, y ese patron es
+imposible de deshacer una vez que el frontend depende de el.
+
+Cuanto pesa depende del lote: los de La Cuadricula son de 100 x 100, o sea
+10.000 celdas y unos 2 MB. `CellSummary` es deliberadamente compacto porque cada
+campo que se le anada se multiplica por diez mil. **Sin paginar**, y queda como
+deuda conocida: el frontend necesita la malla completa para construir la
+geometria.
 
 ## GET /cells/{cell_id}/performance
 
@@ -148,7 +170,8 @@ El endpoint que cierra el ciclo.
     {
       "prediction_id": "978d7802-6d1f-4714-9d8a-e2d40be5fb2f",
       "predicted_at": "2026-08-30T21:44:15",
-      "model_version": "rule-based-v0.1",
+      "as_of": "2026-06-01T09:00:00Z",
+      "model_version": "rule-based-v0.1+impact-v0",
       "projected_yield_kg": 11.9634,
       "projected_boxes": 2,
       "estimated_loss_percentage": 9.18,
@@ -164,10 +187,30 @@ El endpoint que cierra el ciclo.
 }
 ```
 
-Se evalua **el historial completo**, no solo la ultima prediccion.
+Se evalua **el historial completo**, no solo la ultima prediccion. Con `?as_of=`
+la lista se acota a la prediccion de ese instante: exactamente una entrada, o
+ninguna si CERES nunca hablo de ese momento para esa celda. Ninguna es una
+respuesta, no un error.
+
+`?crop_cycle_id=` se **verifica**, no solo filtra: un ciclo que no existe es un
+404 y uno de otro lote un 409, los mismos codigos que al escribir. Una lista
+vacia significa "ciclo valido, todavia sin predicciones" y nada mas; antes
+tambien podia significar "ciclo ajeno" o "ciclo inexistente", y las tres
+respuestas eran identicas.
+
+`predicted_at` y `as_of` son cosas distintas: cuando se EJECUTO el calculo y de
+que momento HABLA. Una serie ordenada por el primero mezcla el orden de
+ejecucion con el de los hechos.
+
 `absolute_error_kg` y `percentage_error` son `null` mientras no exista cosecha;
-`percentage_error` tambien es `null` si el rendimiento real es 0, porque
-dividir por cero no da un porcentaje enorme, no da nada.
+`percentage_error` tambien es `null` si el rendimiento real es 0, porque dividir
+por cero no da un porcentaje enorme, no da nada.
+
+**La cosecha no depende de `as_of`.** Es la misma celda y el mismo ciclo, asi que
+el rendimiento real es el mismo se mire desde el momento que se mire; lo que
+cambia es la prediccion contra la que se compara, y por tanto el error. Esa es
+la lectura util del eje temporal: la verdad se queda quieta y la prediccion se
+acerca o se aleja de ella.
 
 ## Codigos de estado
 

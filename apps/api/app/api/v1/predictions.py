@@ -29,6 +29,6 @@ def create_prediction(payload: PredictionCreate, session: SessionDep) -> Predict
     historica mas. Por eso responde 201 y no hay ni PUT ni DELETE.
     """
     prediction = predictions_service.create_prediction(
-        session, payload.cell_id, payload.crop_cycle_id
+        session, payload.cell_id, payload.crop_cycle_id, payload.as_of
     )
     return PredictionRead.model_validate(prediction)

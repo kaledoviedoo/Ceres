@@ -12,7 +12,7 @@
  * modelo, no un efecto secundario de mirar el mapa.
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { MetricGroup, MetricRow } from "@/components/cell-inspector/MetricRow";
 import { RiskBadge, Tag } from "@/components/ui/Badge";
@@ -42,23 +42,59 @@ const FACTOR_LABELS: Record<keyof Prediction["factors"], string> = {
 interface PredictionPanelProps {
   cellId: string;
   cropCycleId: string | null;
+  /**
+   * El instante que se está mirando, para que lo guardado coincida con lo visto.
+   *
+   * `null` deja que la API use "ahora", que es lo que hacía siempre.
+   */
+  asOf: string | null;
+  /**
+   * Se llama cuando el POST ha guardado de verdad. Solo entonces: un fallo no
+   * cambia nada en el servidor y no hay nada nuevo que leer.
+   *
+   * Este panel es el único sitio que escribe, pero lo que depende de esa
+   * escritura —el histórico, la predicción contra la cosecha— lo posee el
+   * inspector. Sin este aviso, esos bloques seguían enseñando la lista y la
+   * entrada anteriores hasta que el usuario salía de la celda y volvía.
+   */
+  onSaved: () => void;
 }
 
-export function PredictionPanel({ cellId, cropCycleId }: PredictionPanelProps) {
+export function PredictionPanel({ cellId, cropCycleId, asOf, onSaved }: PredictionPanelProps) {
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // El panel se remonta al cambiar de celda. Si el POST de la celda anterior
+  // responde cuando ya se mira otra, no tiene a quién avisar: la escritura
+  // ocurrió y la celda anterior la enseñará cuando se vuelva a abrir. Avisar
+  // igualmente obligaría a la celda nueva a pedirse otra vez sin motivo.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   async function runPrediction() {
     if (!cropCycleId) return;
     setIsRunning(true);
     setError(null);
     try {
-      setPrediction(await ceresApi.createPrediction({ cell_id: cellId, crop_cycle_id: cropCycleId }));
+      const saved = await ceresApi.createPrediction({
+        cell_id: cellId,
+        crop_cycle_id: cropCycleId,
+        ...(asOf ? { as_of: asOf } : {}),
+      });
+      if (!mounted.current) return;
+      setPrediction(saved);
+      onSaved();
     } catch (cause) {
+      if (!mounted.current) return;
       setError(describeError(cause));
     } finally {
-      setIsRunning(false);
+      if (mounted.current) setIsRunning(false);
     }
   }
 

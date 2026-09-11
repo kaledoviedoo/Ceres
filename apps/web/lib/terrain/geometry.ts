@@ -13,7 +13,7 @@
 
 import { BufferAttribute, BufferGeometry, PlaneGeometry } from "three";
 
-import { CELL_SIZE, gridToWorld, worldToGrid } from "@/lib/terrain/coords";
+import { gridToWorld, worldToGrid, type PlotGrid } from "@/lib/terrain/coords";
 import type { ElevationField } from "@/lib/terrain/elevation";
 
 /**
@@ -30,11 +30,15 @@ import type { ElevationField } from "@/lib/terrain/elevation";
 export const SEGMENTS_PER_CELL = 4;
 
 /**
- * Grosor del canto de tierra bajo el terreno.
+ * Grosor del canto de tierra bajo el terreno, en METROS.
  *
  * Fino a propósito. Un zócalo profundo lee como un bloque extraído del suelo, y
  * lo que interesa es una superficie de campo ligeramente levantada, con el canto
  * justo para que el borde no parezca una lámina de papel.
+ *
+ * Es una profundidad física y no una fracción del lote: 32 cm de tierra bajo el
+ * campo son 32 cm midan lo que midan las celdas. En un lote pequeño el canto se
+ * ve proporcionalmente más alto, que es lo que pasaría de verdad.
  */
 export const SKIRT_DEPTH = 0.32;
 
@@ -45,26 +49,25 @@ export const SKIRT_DEPTH = 0.32;
  * recalculan las normales: sin eso, la iluminación seguiría creyendo que es un
  * plano liso y el relieve no se vería en absoluto.
  */
-export function buildTerrainMesh(
-  field: ElevationField,
-  gridWidth: number,
-  gridHeight: number,
-): BufferGeometry {
-  const worldWidth = gridWidth * CELL_SIZE;
-  const worldHeight = gridHeight * CELL_SIZE;
+export function buildTerrainMesh(field: ElevationField, plot: PlotGrid): BufferGeometry {
+  // El TAMAÑO del plano es físico; su SUBDIVISION es por celda. Son dos cosas
+  // distintas y conviene que se lean como tales: subdividir sigue el dato, no
+  // los metros, porque entre dos centros de celda no hay medición que resolver.
+  const worldWidth = plot.width * plot.cellSizeM;
+  const worldHeight = plot.height * plot.cellSizeM;
 
   const geo = new PlaneGeometry(
     worldWidth,
     worldHeight,
-    gridWidth * SEGMENTS_PER_CELL,
-    gridHeight * SEGMENTS_PER_CELL,
+    plot.width * SEGMENTS_PER_CELL,
+    plot.height * SEGMENTS_PER_CELL,
   );
   // El plano nace en XY; el terreno vive en XZ con la altura en +Y.
   geo.rotateX(-Math.PI / 2);
 
   const position = geo.attributes.position!;
   for (let i = 0; i < position.count; i += 1) {
-    const [gx, gy] = worldToGrid(position.getX(i), position.getZ(i), gridWidth, gridHeight);
+    const [gx, gy] = worldToGrid(position.getX(i), position.getZ(i), plot);
     position.setY(i, field.heightAt(gx, gy));
   }
   position.needsUpdate = true;
@@ -81,19 +84,15 @@ export function buildTerrainMesh(
  * y negro en los otros tres. Recorriendo el borde como un anillo cerrado, todas
  * heredan la misma orientación.
  */
-export function buildSkirt(
-  field: ElevationField,
-  gridWidth: number,
-  gridHeight: number,
-): BufferGeometry {
-  const perTramo = Math.max(gridWidth, gridHeight) * 2;
+export function buildSkirt(field: ElevationField, plot: PlotGrid): BufferGeometry {
+  const perTramo = Math.max(plot.width, plot.height) * 2;
   const base = -SKIRT_DEPTH;
 
   const esquinas: [number, number][] = [
     [-0.5, -0.5],
-    [gridWidth - 0.5, -0.5],
-    [gridWidth - 0.5, gridHeight - 0.5],
-    [-0.5, gridHeight - 0.5],
+    [plot.width - 0.5, -0.5],
+    [plot.width - 0.5, plot.height - 0.5],
+    [-0.5, plot.height - 0.5],
   ];
 
   const anillo: [number, number][] = [];
@@ -111,8 +110,8 @@ export function buildSkirt(
     const a = anillo[i]!;
     const b = anillo[(i + 1) % anillo.length]!;
 
-    const [ax, az] = gridToWorld(a[0], a[1], gridWidth, gridHeight);
-    const [bx, bz] = gridToWorld(b[0], b[1], gridWidth, gridHeight);
+    const [ax, az] = gridToWorld(a[0], a[1], plot);
+    const [bx, bz] = gridToWorld(b[0], b[1], plot);
     const ay = field.heightAt(a[0], a[1]);
     const by = field.heightAt(b[0], b[1]);
 
@@ -136,12 +135,11 @@ export function buildSkirt(
 export function drapeOnTerrain(
   points: [number, number][],
   field: ElevationField,
-  gridWidth: number,
-  gridHeight: number,
+  plot: PlotGrid,
   offset: number,
 ): [number, number, number][] {
   return points.map(([gx, gy]) => {
-    const [wx, wz] = gridToWorld(gx, gy, gridWidth, gridHeight);
+    const [wx, wz] = gridToWorld(gx, gy, plot);
     return [wx, field.heightAt(gx, gy) + offset, wz] as [number, number, number];
   });
 }

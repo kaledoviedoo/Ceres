@@ -7,17 +7,13 @@
  *
  * Por eso el backend no devuelve colores: devuelve valores, y cambiar la paleta
  * no obliga a tocar Python. Ver docs/architecture.md.
+ *
+ * Aquí vive el VOCABULARIO de color —los tres tonos del riesgo, las dos rampas y
+ * la trama no cromática—. Qué campo se pinta con cuál lo decide cada capa en
+ * `lib/terrain/layers.ts`; este módulo no conoce ningún nombre de métrica.
  */
 
 import type { CellOverview, RiskLevel } from "@/lib/types/api";
-
-export type ViewMode = "risk" | "yield" | "loss";
-
-export const VIEW_MODES: { id: ViewMode; label: string; description: string }[] = [
-  { id: "risk", label: "Riesgo", description: "Factores de riesgo presentes en la celda" },
-  { id: "yield", label: "Rendimiento", description: "Kilogramos proyectados" },
-  { id: "loss", label: "Pérdida", description: "Porcentaje de pérdida estimada" },
-];
 
 /** Paleta de riesgo: verde sano, ámbar atención, rojo crítico. */
 export const RISK_COLORS: Record<RiskLevel, { fill: string; text: string; label: string }> = {
@@ -64,7 +60,21 @@ const LOSS_STOPS: readonly Stop[] = [
 ];
 
 /**
- * Rampa de RENDIMIENTO: rojo -> ámbar -> verde.
+ * Hacia dónde es "mejor" una métrica.
+ *
+ *   up    más es mejor: rendimiento, calidad de suelo, sanidad.
+ *   down  más es peor: pérdida.
+ *
+ * Se parametriza la DIRECCION y no el nombre de la métrica: así una capa nueva
+ * elige su orientación sin que este módulo tenga que aprender qué campo es.
+ * Antes había un `ViewMode` con un caso por métrica, y añadir suelo y sanidad
+ * habría obligado a tocar aquí el color de dos campos que este archivo no tiene
+ * por qué conocer.
+ */
+export type RampDirection = "up" | "down";
+
+/**
+ * Rampa de MAS ES MEJOR: rojo -> ámbar -> verde.
  *
  * Los mismos tres tonos del riesgo, pero al revés: en rendimiento, más es mejor,
  * así que el verde está en el extremo alto y el rojo en el bajo. `t` va de 0
@@ -103,50 +113,23 @@ function ramp(t: number, stops: readonly Stop[]): string {
   return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
 }
 
-/** Extremos de cada rampa, para pintar la leyenda sin duplicar los tonos. */
-export function rampCss(mode: ViewMode): string {
-  const stops = mode === "yield" ? YIELD_STOPS : LOSS_STOPS;
-  const paradas = stops.map((s) => `rgb(${s.rgb.join(", ")}) ${s.at * 100}%`).join(", ");
-  return `linear-gradient(to right, ${paradas})`;
-}
-
-/** Rango de una métrica en el lote, para normalizar la rampa de color. */
-export interface MetricRange {
-  min: number;
-  max: number;
-}
-
-export function metricRange(cells: CellOverview[], mode: ViewMode): MetricRange {
-  if (mode === "risk") return { min: 0, max: 1 };
-
-  const values = cells.map((cell) =>
-    mode === "yield" ? cell.projected_yield_kg : cell.estimated_loss_percentage,
-  );
-  if (values.length === 0) return { min: 0, max: 1 };
-
-  return { min: Math.min(...values), max: Math.max(...values) };
-}
-
 /**
- * Color de una celda según el modo de vista.
+ * Color de un valor ya normalizado a [0, 1] dentro del recorrido del lote.
  *
- * En modo riesgo se usan los tres colores discretos, no la rampa: el nivel es
- * una decisión del dominio (umbrales en `app/domain/units.py`) y difuminarlo
- * escondería justo la información que el agrónomo busca.
+ * La normalización la hace quien llama, con el mínimo y el máximo REALES de las
+ * 400 celdas. No hay ningún umbral agronómico aquí: solo dónde cae el valor
+ * entre el peor y el mejor del propio lote.
  */
-export function cellColor(cell: CellOverview, mode: ViewMode, range: MetricRange): string {
-  if (mode === "risk") return RISK_COLORS[cell.risk_level].fill;
+export function rampColor(t: number, direction: RampDirection): string {
+  return ramp(t, direction === "up" ? YIELD_STOPS : LOSS_STOPS);
+}
 
-  const span = range.max - range.min;
-
-  if (mode === "yield") {
-    // En rendimiento, `t` = 1 es lo mejor: la rampa ya está orientada así.
-    if (span === 0) return ramp(0.5, YIELD_STOPS);
-    return ramp((cell.projected_yield_kg - range.min) / span, YIELD_STOPS);
-  }
-
-  if (span === 0) return ramp(0.5, LOSS_STOPS);
-  return ramp((cell.estimated_loss_percentage - range.min) / span, LOSS_STOPS);
+/** Extremos de una rampa en CSS, para dibujar una leyenda sin repetir tonos. */
+export function rampCss(direction: RampDirection): string {
+  const stops = direction === "up" ? YIELD_STOPS : LOSS_STOPS;
+  return `linear-gradient(to right, ${stops
+    .map((s) => `rgb(${s.rgb.join(", ")}) ${s.at * 100}%`)
+    .join(", ")})`;
 }
 
 /** Cuántas celdas hay en cada nivel. Alimenta la leyenda. */

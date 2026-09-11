@@ -30,6 +30,8 @@ class HarvestRead(CeresORMSchema):
     actual_boxes: int = Field(ge=0)
     harvested_at: date
     notes: str | None = None
+    #: Quien registro la cosecha. Mismo motivo que en las observaciones.
+    created_by: uuid.UUID | None = None
     created_at: datetime
 
     @computed_field
