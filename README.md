@@ -38,31 +38,62 @@ ESTADO  ->  PREDICCION  ->  OBSERVACION  ->  COSECHA  ->  VALIDACION
 | 5 | Frontend 2D (grid 20x20) | ✅ |
 | 6 | Integracion Next.js ↔ FastAPI | ✅ (hecha en la fase 5) |
 | 7 | React Three Fiber | ✅ |
-| 8 | Observaciones | ⬜ siguiente |
-| 9 | Cosechas y error de prediccion | ⬜ |
-| 10 | Historico prediccion vs realidad | ⬜ |
+| 8 | Observaciones: API, procedencia y efecto en el motor (`state_at`) | ✅ (registro solo por API) |
+| 9 | Cosechas y error de prediccion: API, vista `cell_performance`, «Prediccion vs cosecha» | ✅ (registro solo por API) |
+| 10 | Historico prediccion vs realidad en el inspector | ✅ |
+| 11 | Eje temporal: `as_of`, `/timeline`, selector de momento en la interfaz | ✅ |
+| 12 | La Cuadricula: finca sintetica de 4 ha para validar el ciclo completo | ✅ |
+| 13 | Suite PostgreSQL contra una base local de test, con barrera anti-Supabase | ✅ |
+
+Las observaciones y las cosechas se crean por API (`POST /observations`,
+`POST /harvests`); la interfaz las lee y las usa, pero todavia no tiene
+formularios para registrarlas.
 
 Lo que hay ahora: el ciclo completo funcionando de extremo a extremo, desde el
-navegador hasta PostgreSQL.
+navegador hasta PostgreSQL, y con un eje temporal.
 
 ```
-Next.js  ->  FastAPI  ->  Prediction Engine  ->  Supabase
+Next.js  ->  FastAPI  ->  Prediction Engine  ->  PostgreSQL (Supabase)
+   |                                                |
+   +-- finca -> lote -> ciclo -> momento (as_of) ---+
    |                                                |
    +-- click en una celda -> cell_id ---------------+
    |                                                |
-   +-- Cell Inspector <- prediccion guardada -------+
+   +-- Cell Inspector <- prediccion, cosecha, error +
 ```
 
-El terreno se representa en 3D con React Three Fiber: un bloque de tierra de
-20 × 20 m cuyo relieve sale de la elevacion real y cuya cara superior se pinta
-con las metricas del motor. Camara orbital, hover, seleccion y jalon de celda.
+El terreno se representa en 3D con React Three Fiber: un bloque de tierra cuyo
+relieve sale de la elevacion de cada celda y cuya cara superior se pinta con las
+metricas del motor. Camara orbital, hover, seleccion y jalon de celda.
 
-**438 tests**: 349 en el backend (236 unit + 73 SQLite + 40 PostgreSQL real) y
-89 en el frontend.
+**El eje temporal.** Cada prediccion guarda de que momento habla (`as_of`),
+distinto de cuando se calculo (`created_at`). `GET /plots/{id}/timeline` lista
+los momentos de los que CERES ya ha hablado sobre un lote; la interfaz los
+ofrece como selector y pide el mapa y la ficha de ese instante. El estado de una
+celda en una fecha se deriva de sus observaciones anteriores a esa fecha
+(`state_at`), y el rendimiento cosechado no depende de desde cuando se mire:
+lo que cambia es la prediccion con la que se compara, y por tanto el error.
 
-**Verificado contra Supabase real** (PostgreSQL 17, proyecto `ceres-mvp`):
-migraciones, seed de 800 celdas, constraints, trigger de inmutabilidad, vista
-`cell_performance` y los 13 endpoints. Detalle en
+**Dos fincas en la base de datos, las dos sinteticas** (40.400 celdas):
+
+- *CERES Demo Farm*: 1 lote de 20 × 20 m, 400 celdas, 24 observaciones, sin
+  predicciones ni cosechas. Es el seed reproducible de `generate_demo_data.py`.
+- *La Cuadricula*: 4 lotes de 1 ha (100 × 100 celdas de 1 m2 cada uno), cuatro
+  cultivos, 9.900 observaciones, 80.000 predicciones (dos momentos por celda) y
+  40.000 cosechas. Construida como una simulacion agronomica coherente —una sola
+  topografia, humedad latente, eventos localizados— para validar el ciclo
+  completo. La verdad y la prediccion se generan por separado. Detalle en
+  [cuadricula.md](docs/cuadricula.md).
+
+**937 tests**: 608 en el backend (unit, integracion sobre SQLite en memoria y
+42 contra PostgreSQL real) y 329 en el frontend.
+
+**Verificado contra PostgreSQL real.** La suite `tests/postgres/` corre contra
+una base local `ceres_test` con las migraciones y el seed aplicados: constraints,
+trigger de inmutabilidad, vista `cell_performance`, paridad Python/SQL hasta el
+ultimo decimal, los 16 endpoints y el ciclo prediccion → cosecha → error. Supabase
+aloja los datos de la aplicacion y **no es un destino permitido** para esa suite.
+La verificacion original de la fase 4.5 contra Supabase sigue documentada en
 [api.md](docs/api.md#verificado-contra-supabase-fase-45).
 
 ---
@@ -111,7 +142,7 @@ editor SQL de Supabase.
 py scripts/generate_demo_data.py --apply
 ```
 
-Genera 1 finca, 2 lotes, 800 celdas, 1 ciclo de cultivo y 24 observaciones.
+Genera 1 finca, 1 lote, 400 celdas, 1 ciclo de cultivo y 24 observaciones.
 Reaplicarlo es idempotente: converge al mismo estado, no lo acumula.
 
 El dataset incluye una **zona critica sintetica** que produce celdas de riesgo
@@ -193,9 +224,9 @@ Remove-Item Env:DATABASE_URL
 | `psql "$DATABASE_URL" -f scripts/reset_demo_data.sql` | Vacia todas las tablas |
 | `py scripts/preview_predictions.py` | Predice las 400 celdas y muestra 3 ejemplos |
 | `cd apps/api && uvicorn app.main:app --reload --port 8010` | Levanta la API |
-| `cd apps/api && pytest` | Tests del backend (349) |
+| `cd apps/api && pytest` | Tests del backend (608) |
 | `cd apps/web && npm run dev` | Levanta el frontend en :3000 |
-| `cd apps/web && npm test` | Tests del frontend (43) |
+| `cd apps/web && npm test` | Tests del frontend (329) |
 | `cd apps/web && npm run typecheck` | Comprueba los tipos |
 
 ---
@@ -240,7 +271,7 @@ ceres/apps/web/
 │   ├── types/          tipos derivados de los schemas de FastAPI
 │   └── presentation/   valores -> colores y formato
 ├── stores/             Zustand: solo estado de interfaz
-└── tests/              43 tests (vitest + testing-library)
+└── tests/              329 tests (vitest + testing-library)
 ```
 
 ---
@@ -277,9 +308,11 @@ result = predict(cell, crop, area_m2=1.0)
 
 ## Criterio de exito del MVP
 
-Un agronomo entra al dashboard, elige finca → lote → ciclo, ve una malla de
-20 × 20, hace click en una celda, y CERES le devuelve rendimiento proyectado,
+Un agronomo entra al dashboard, elige finca → lote → ciclo → momento, ve el
+lote en 3D, hace click en una celda, y CERES le devuelve rendimiento proyectado,
 cajas, perdida estimada, riesgo y los factores que lo explican. Despues registra
-una observacion, mas tarde la cosecha real, y CERES le dice cuanto se equivoco.
+una observacion, mas tarde la cosecha real, y CERES le dice cuanto se equivoco
+en cada momento del que hablo.
 
-Si eso funciona de extremo a extremo, el MVP es valido.
+Eso funciona de extremo a extremo sobre La Cuadricula. Lo que falta para que un
+agronomo lo haga sin tocar la API es el formulario de observaciones y cosechas.
