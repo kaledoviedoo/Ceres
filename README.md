@@ -149,6 +149,34 @@ cd apps/api
 pytest                    # todo
 pytest tests/unit         # sin base de datos
 pytest tests/integration  # SQLite en memoria, no PostgreSQL
+pytest -m postgres        # PostgreSQL real: solo contra una base de TEST
+```
+
+Los tests de `tests/postgres/` vacian tablas enteras (`TRUNCATE`). Solo corren
+si `TEST_DATABASE_URL` apunta a una base que puedan destruir: un PostgreSQL
+local con una base llamada `ceres_test` y las migraciones aplicadas. Si apunta
+a la base de la aplicacion o a cualquier proyecto de Supabase se saltan con
+`POSTGRES TEST DATABASE NOT SAFE`, y ninguna variable de entorno lo levanta
+(`tests/postgres/guard.py`). Si ademas la base guarda un dataset, hace falta
+`CERES_PG_TESTS_MAY_TRUNCATE=1` para autorizar la limpieza.
+
+Para montarla una vez, con un PostgreSQL local (14+) y su superusuario:
+
+```sql
+CREATE ROLE ceres LOGIN PASSWORD '...';
+CREATE DATABASE ceres_test OWNER ceres;
+```
+
+Despues, en `.env`, `TEST_DATABASE_URL=postgresql+psycopg://ceres:...@localhost:5432/ceres_test`,
+y migraciones y seed apuntando a ella SOLO durante ese comando (`apply_migrations.py`
+y `generate_demo_data.py` leen `DATABASE_URL`, asi que se les pasa como variable
+de entorno de la sesion, sin tocar el `.env`):
+
+```powershell
+$env:DATABASE_URL = "postgresql+psycopg://ceres:...@localhost:5432/ceres_test"
+py scripts/apply_migrations.py
+py scripts/generate_demo_data.py --apply
+Remove-Item Env:DATABASE_URL
 ```
 
 ---
@@ -191,7 +219,7 @@ ceres/
 ├── apps/api/tests/
 │   ├── unit/           sin base de datos
 │   ├── integration/    SQLite en memoria
-│   └── postgres/       Supabase real (se salta sin credenciales)
+│   └── postgres/       PostgreSQL real, solo una base de test (ver arriba)
 ├── database/
 │   ├── migrations/     SQL versionado (fuente de verdad del esquema)
 │   └── seeds/          generado, no versionado

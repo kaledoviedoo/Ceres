@@ -15,11 +15,17 @@ pytest -m "not postgres"     # todo lo demas
 ## Advertencia y aislamiento
 
 Estos tests **escriben** en la base de datos apuntada por `TEST_DATABASE_URL`.
-Usa un proyecto desechable, nunca uno con datos que te importen.
+Usa una base desechable, nunca una con datos que te importen.
 
-En el MVP `TEST_DATABASE_URL` apunta a la MISMA base que `DATABASE_URL`: el
-proyecto Supabase `ceres-mvp` existe solo para esto y sus datos son sinteticos.
-Eso obliga a que la limpieza sea quirurgica:
+`TEST_DATABASE_URL` NO puede ser la base de la aplicacion ni estar en Supabase:
+`guard.razon_destino_inseguro` lo comprueba antes de la primera limpieza y, si
+no le gusta el destino, los tests se saltan con `POSTGRES TEST DATABASE NOT
+SAFE` y ninguna variable de entorno lo levanta. Durante el MVP apuntaba al mismo
+proyecto Supabase que `DATABASE_URL`; con la finca sintetica cargada ahi, eso
+dejo de ser aceptable. El destino esperado es un PostgreSQL local con una base
+llamada `ceres_test` y las migraciones aplicadas.
+
+La limpieza, ademas, es quirurgica:
 
 - `predictions` y `harvests` se vacian con TRUNCATE. El seed no crea ninguna
   fila en esas tablas, asi que vaciarlas no destruye nada. TRUNCATE y no DELETE
@@ -45,6 +51,8 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from tests.postgres.guard import razon_destino_inseguro
+
 
 def _test_database_url() -> str | None:
     """URL de la base de datos de pruebas, desde el entorno o desde .env.
@@ -61,6 +69,13 @@ def _test_database_url() -> str | None:
 
 
 TEST_DATABASE_URL = _test_database_url()
+
+
+def _app_database_url() -> str | None:
+    """La base de la aplicacion, para asegurarse de que NO es la de los tests."""
+    from app.config import get_settings
+
+    return getattr(get_settings(), "database_url", None) or None
 
 def pytest_collection_modifyitems(config, items):
     """Marca `postgres` y salta todo lo de este directorio si no hay credenciales.
@@ -182,7 +197,7 @@ def cleanup_transactional_rows(pg_session):
     que no hay forma de borrar solo las filas del test. Mientras la base de
     desarrollo tuvo 0 predicciones y 0 cosechas eso no destruia nada.
 
-    Dejo de ser inofensivo con la finca sintetica La Cuadricula: 120.000
+    Dejo de ser inofensivo con la finca sintetica La Cuadricula: 80.000
     predicciones, 40.000 cosechas y 9.900 observaciones sin autor --que es
     justo lo que la segunda sentencia borra-- desaparecian al correr los tests,
     en silencio, y recargarlas cuesta tres minutos.
@@ -190,7 +205,19 @@ def cleanup_transactional_rows(pg_session):
     Asi que la destruccion pasa a ser explicita. Si la base guarda un dataset,
     estos tests se saltan y dicen por que; para ejecutarlos hay que autorizarlo
     con la variable de entorno, sabiendo que despues habra que recargar.
+
+    Y HAY UNA SEGUNDA PUERTA QUE NADIE ABRE DESDE EL ENTORNO: contar filas
+    protege un dataset, no la base. Antes de mirar cuantas filas hay se mira a
+    donde apunta la URL, y si es la base de la aplicacion o esta en Supabase,
+    se salta con `POSTGRES TEST DATABASE NOT SAFE` aunque el opt-in este puesto.
     """
+    motivo = razon_destino_inseguro(TEST_DATABASE_URL or "", _app_database_url())
+    if motivo:
+        pytest.skip(
+            f"POSTGRES TEST DATABASE NOT SAFE: {motivo}. Apunta TEST_DATABASE_URL "
+            f"a un PostgreSQL local con una base llamada ceres_test."
+        )
+
     predicciones, cosechas, observaciones = _filas_en_riesgo(pg_session)
     total = predicciones + cosechas + observaciones
 

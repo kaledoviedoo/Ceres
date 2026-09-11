@@ -31,7 +31,10 @@ CELL_CODE = "A-00240"
 def test_connects_to_a_real_postgres(pg_session):
     version = pg_session.execute(text("SHOW server_version")).scalar()
 
-    assert version.startswith(("14", "15", "16", "17"))
+    # Lo que se afirma es "un PostgreSQL real y no anterior al minimo que
+    # declaran las migraciones (14+)", no una version concreta: Supabase
+    # corria 17 y el PostgreSQL local de test corre 18.
+    assert int(version.split(".")[0]) >= 14
 
 
 def test_all_migrations_are_applied(pg_session):
@@ -612,6 +615,35 @@ def test_cell_from_another_plot_is_rejected(pg_client, control_plot, seeded_cycl
 
     assert response.status_code == 409
     assert "lote" in response.json()["detail"]
+
+
+def test_cell_readers_reject_a_cycle_from_another_plot(pg_client, control_plot, seeded_cycle):
+    """C3 contra PostgreSQL real: leer contesta lo mismo que escribir.
+
+    `/performance` y `/cells/{id}/predictions` filtraban por `crop_cycle_id` sin
+    verificarlo, y a la misma pareja imposible que el POST rechaza con 409 le
+    contestaban 200 con la lista vacia. Las filas viven en `ceres_test`, no en
+    SQLite: `control_plot` las inserta y las borra en esta misma base.
+    """
+    celda = control_plot["cell_id"]
+    params = {"crop_cycle_id": str(seeded_cycle)}
+
+    rendimiento = pg_client.get(f"/api/v1/cells/{celda}/performance", params=params)
+    historial = pg_client.get(f"/api/v1/cells/{celda}/predictions", params=params)
+    escritura = pg_client.post(
+        "/api/v1/predictions", json={"cell_id": str(celda), "crop_cycle_id": str(seeded_cycle)}
+    )
+
+    assert rendimiento.status_code == historial.status_code == escritura.status_code == 409
+    assert "Z-00001" in rendimiento.json()["detail"]
+
+
+def test_cell_readers_return_404_for_a_missing_cycle(pg_client, seeded_cell):
+    missing = "00000000-0000-0000-0000-000000000000"
+    params = {"crop_cycle_id": missing}
+
+    assert pg_client.get(f"/api/v1/cells/{seeded_cell}/performance", params=params).status_code == 404
+    assert pg_client.get(f"/api/v1/cells/{seeded_cell}/predictions", params=params).status_code == 404
 
 
 def test_missing_ids_return_404_against_postgres(pg_client, seeded_cycle):
